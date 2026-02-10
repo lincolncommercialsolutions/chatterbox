@@ -226,6 +226,14 @@ VOICE_LIBRARY = {
         "description": "Soothing and meditative voice",
         "quality": "high",
         "tags": ["calm", "soothing", "meditative"]
+    },
+    "andrew_tate": {
+        "name": "Andrew Tate Voice",
+        "language": "en",
+        "audio_url": "https://chatterbox-audio-231399652064.s3.us-east-1.amazonaws.com/chatterbox/voices/andrew_tate.mp4",
+        "description": "Andrew Tate voice - confident and motivational",
+        "quality": "high",
+        "tags": ["confident", "motivational", "assertive", "custom"]
     }
 }
 
@@ -285,6 +293,15 @@ CHARACTER_VOICES = {
         "temperature": 0.9,
         "cfg_weight": 0.5,
         "description": "Cheerful and warm character"
+    },
+    "andrew_tate": {
+        "name": "Andrew Tate",
+        "voice_id": "andrew_tate",
+        "language": "en",
+        "exaggeration": 0.7,
+        "temperature": 0.6,
+        "cfg_weight": 0.5,
+        "description": "Confident alpha mindset coach"
     }
 }
 
