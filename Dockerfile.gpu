@@ -1,0 +1,106 @@
+# Multi-stage build for Chatterbox TTS on AWS GPU
+# Production-ready deployment with GPU support and optimization
+
+# Stage 1: Builder
+FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04 as builder
+
+RUN apt-get update && apt-get install -y \
+    python3.11 \
+    python3.11-venv \
+    python3.11-dev \
+    python3-pip \
+    build-essential \
+    git \
+    wget \
+    curl \
+    libsndfile1-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python3.11 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Upgrade pip and install build tools
+RUN pip install --upgrade pip setuptools wheel build
+
+# Copy project files
+COPY pyproject.toml /tmp/
+COPY chatterbox/ /tmp/chatterbox/
+
+# Install dependencies with optimization flags
+WORKDIR /tmp
+ENV TORCH_CUDA_ARCH_LIST="7.0;8.0;8.6;9.0"
+RUN pip install -e . --no-build-isolation -v
+
+
+# Stage 2: Runtime
+FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
+
+LABEL maintainer="Chatterbox Team" \
+      description="Chatterbox TTS API Server for AWS GPU Deployment" \
+      version="1.0.0"
+
+# Install minimal runtime dependencies
+RUN apt-get update && apt-get install -y \
+    python3.11 \
+    libsndfile1 \
+    ffmpeg \
+    curl \
+    ca-certificates \
+    tini \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# CUDA environment variables for optimal GPU usage
+ENV CUDA_HOME=/usr/local/cuda
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:$LD_LIBRARY_PATH
+ENV PATH=/usr/local/cuda/bin:$PATH
+ENV TORCH_HOME=/app/.cache/torch
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+# Python optimization flags
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONOPTIMIZE=2
+
+# PyTorch optimization
+ENV TORCH_CUDA_ARCH_LIST="7.0;8.0;8.6;9.0"
+ENV CUBLAS_WORKSPACE_CONFIG=:4294967296
+
+# Application settings via environment variables
+ENV API_PORT=5000
+ENV DEVICE=cuda
+ENV LOG_LEVEL=INFO
+ENV CACHE_ENABLED=true
+ENV MAX_TEXT_LENGTH=500
+ENV DEFAULT_MAX_TOKENS=400
+ENV CORS_ORIGINS=*
+
+# Create app directory and non-root user
+WORKDIR /app
+RUN useradd -m -u 1000 -s /bin/bash chatterbox && \
+    mkdir -p /app/.cache/torch && \
+    chown -R chatterbox:chatterbox /app
+
+# Copy application code
+COPY --chown=chatterbox:chatterbox chatterbox/ /app/chatterbox/
+COPY --chown=chatterbox:chatterbox pyproject.toml /app/
+
+USER chatterbox
+
+# Health check endpoint (critical for AWS ALB/ECS)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -f http://localhost:${API_PORT}/health || exit 1
+
+# Expose API port
+EXPOSE 5000
+
+# Use tini to handle signals properly
+ENTRYPOINT ["/usr/bin/tini", "--"]
+
+# Start the API server
+CMD ["python", "/app/chatterbox/api_server.py"]

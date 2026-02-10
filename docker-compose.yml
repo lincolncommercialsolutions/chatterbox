@@ -1,0 +1,112 @@
+version: '3.8'
+
+services:
+  chatterbox-tts-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    image: chatterbox-tts:latest
+    container_name: chatterbox-tts-api
+    
+    # GPU support (required for inference)
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+        limits:
+          cpus: '4'
+          memory: 16G
+    
+    # Environment variables - load from .env file
+    env_file:
+      - .env
+    environment:
+      # API Configuration
+      API_PORT: 5000
+      DEVICE: cuda
+      LOG_LEVEL: INFO
+      
+      # Cache Configuration
+      CACHE_ENABLED: 'true'
+      
+      # Text Processing
+      MAX_TEXT_LENGTH: 500
+      DEFAULT_MAX_TOKENS: 400
+      
+      # CORS for Vercel Frontend
+      CORS_ORIGINS: 'https://yourdomain.vercel.app,http://localhost:3000'
+      
+      # GPU Optimization
+      CUDA_VISIBLE_DEVICES: '0'
+      CUDA_HOME: /usr/local/cuda
+      LD_LIBRARY_PATH: /usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib
+      TORCH_CUDA_ARCH_LIST: '7.0;8.0;8.6;9.0'
+      CUBLAS_WORKSPACE_CONFIG: ':4294967296'
+      
+      # Model Caching
+      TORCH_HOME: /app/.cache/torch
+      HF_HOME: /app/.cache/huggingface
+      
+      # Python Optimization
+      PYTHONUNBUFFERED: 'True'
+      PYTHONDONTWRITEBYTECODE: 'True'
+      PYTHONOPTIMIZE: '2'
+    
+    # Volume mounts for model caching (persistent across restarts)
+    volumes:
+      - chatterbox_torch_cache:/app/.cache/torch
+      - chatterbox_hf_cache:/app/.cache/huggingface
+      - ./logs:/app/logs
+    
+    # Port mapping (API endpoint)
+    ports:
+      - "5000:5000"
+    
+    # Network
+    networks:
+      - chatterbox-network
+    
+    # Restart policy for production
+    restart: unless-stopped
+    
+    # Container limits
+    mem_limit: 16g
+    memswap_limit: 16g
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "service=chatterbox-tts-api"
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    
+    # Labels for monitoring/deployment
+    labels:
+      service: "chatterbox-tts"
+      environment: "production"
+      version: "1.0.0"
+
+volumes:
+  chatterbox_torch_cache:
+    driver: local
+  chatterbox_hf_cache:
+    driver: local
+
+networks:
+  chatterbox-network:
+    driver: bridge

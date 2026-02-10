@@ -1,0 +1,184 @@
+{
+  "voices": {
+    "narrator": {
+      "name": "Professional Narrator",
+      "language": "en",
+      "audio_url": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/en_f1.flac",
+      "description": "Clear, professional voice for narration and storytelling",
+      "quality": "high",
+      "tags": ["professional", "formal", "narrative"],
+      "parameters": {
+        "exaggeration": 0.4,
+        "temperature": 0.6,
+        "cfg_weight": 0.7
+      }
+    },
+    "friendly": {
+      "name": "Friendly Voice",
+      "language": "en",
+      "audio_url": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/en_f1.flac",
+      "description": "Warm and approachable voice for casual conversations",
+      "quality": "high",
+      "tags": ["friendly", "warm", "casual"],
+      "parameters": {
+        "exaggeration": 0.6,
+        "temperature": 0.8,
+        "cfg_weight": 0.5
+      }
+    },
+    "expert": {
+      "name": "Expert Voice",
+      "language": "en",
+      "audio_url": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/en_f1.flac",
+      "description": "Authoritative voice for knowledge sharing and technical topics",
+      "quality": "high",
+      "tags": ["expert", "authoritative", "formal"],
+      "parameters": {
+        "exaggeration": 0.35,
+        "temperature": 0.5,
+        "cfg_weight": 0.8
+      }
+    },
+    "mysterious": {
+      "name": "Mysterious Voice",
+      "language": "en",
+      "audio_url": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/en_f1.flac",
+      "description": "Enigmatic and intriguing voice for storytelling and suspense",
+      "quality": "high",
+      "tags": ["mysterious", "dramatic", "theatrical"],
+      "parameters": {
+        "exaggeration": 0.5,
+        "temperature": 0.8,
+        "cfg_weight": 0.6
+      }
+    },
+    "calm": {
+      "name": "Calm Voice",
+      "language": "en",
+      "audio_url": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/en_f1.flac",
+      "description": "Soothing and meditative voice for relaxation and mindfulness",
+      "quality": "high",
+      "tags": ["calm", "soothing", "meditative"],
+      "parameters": {
+        "exaggeration": 0.2,
+        "temperature": 0.4,
+        "cfg_weight": 0.9
+      }
+    },
+    "energetic": {
+      "name": "Energetic Voice",
+      "language": "en",
+      "audio_url": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/en_f1.flac",
+      "description": "Upbeat and enthusiastic voice for motivational content",
+      "quality": "high",
+      "tags": ["energetic", "enthusiastic", "playful"],
+      "parameters": {
+        "exaggeration": 0.8,
+        "temperature": 0.9,
+        "cfg_weight": 0.4
+      }
+    }
+  },
+  "characters": {
+    "assistant": {
+      "name": "AI Assistant",
+      "voice_id": "friendly",
+      "language": "en",
+      "description": "Friendly and helpful AI assistant for general conversations",
+      "system_prompt": "You are a helpful, friendly AI assistant. Respond naturally and conversationally.",
+      "metadata": {
+        "emoji": "🤖",
+        "color": "#4A90E2"
+      }
+    },
+    "narrator": {
+      "name": "Narrator",
+      "voice_id": "narrator",
+      "language": "en",
+      "description": "Professional narrator for storytelling and content delivery",
+      "system_prompt": "You are a professional narrator. Deliver content with clarity and authority.",
+      "metadata": {
+        "emoji": "🎙️",
+        "color": "#7B68EE"
+      }
+    },
+    "luna": {
+      "name": "Luna",
+      "voice_id": "mysterious",
+      "language": "en",
+      "description": "Mysterious character for engaging storytelling experiences",
+      "system_prompt": "You are Luna, a mysterious and wise character. Speak with intrigue and depth.",
+      "metadata": {
+        "emoji": "🌙",
+        "color": "#9B59B6"
+      }
+    },
+    "sage": {
+      "name": "Sage",
+      "voice_id": "calm",
+      "language": "en",
+      "description": "Wise and thoughtful character for educational and philosophical content",
+      "system_prompt": "You are Sage, a wise philosopher. Provide thoughtful, measured responses.",
+      "metadata": {
+        "emoji": "🧙",
+        "color": "#8B7355"
+      }
+    },
+    "echo": {
+      "name": "Echo",
+      "voice_id": "expert",
+      "language": "en",
+      "description": "Technical expert character for informative discussions",
+      "system_prompt": "You are Echo, a technical expert. Provide accurate, detailed technical information.",
+      "metadata": {
+        "emoji": "🔊",
+        "color": "#2ECC71"
+      }
+    },
+    "zephyr": {
+      "name": "Zephyr",
+      "voice_id": "energetic",
+      "language": "en",
+      "description": "Energetic and motivational character for inspiring conversations",
+      "system_prompt": "You are Zephyr, an energetic and motivational character. Inspire and encourage with enthusiasm!",
+      "metadata": {
+        "emoji": "💨",
+        "color": "#E74C3C"
+      }
+    }
+  },
+  "presets": {
+    "storytelling": {
+      "name": "Storytelling Preset",
+      "description": "Optimal settings for narrative content",
+      "default_character": "narrator",
+      "characters": ["narrator", "luna", "sage"],
+      "max_tokens": 500,
+      "temperature_boost": 0.1
+    },
+    "educational": {
+      "name": "Educational Preset",
+      "description": "Settings for educational and informative content",
+      "default_character": "echo",
+      "characters": ["echo", "expert", "sage"],
+      "max_tokens": 400,
+      "temperature_boost": 0.0
+    },
+    "conversational": {
+      "name": "Conversational Preset",
+      "description": "Settings for casual conversations",
+      "default_character": "assistant",
+      "characters": ["assistant", "friendly", "zephyr"],
+      "max_tokens": 300,
+      "temperature_boost": 0.1
+    },
+    "relaxation": {
+      "name": "Relaxation Preset",
+      "description": "Calming settings for meditation and relaxation",
+      "default_character": "sage",
+      "characters": ["sage", "calm", "luna"],
+      "max_tokens": 350,
+      "temperature_boost": -0.2
+    }
+  }
+}

@@ -1,0 +1,7 @@
+# Test connection
+python test_s3_connection.py
+
+# Manage bucket
+python s3_manager.py create-bucket    # Create bucket
+python s3_manager.py list              # List files
+python s3_manager.py upload <file>     # Upload audio file

@@ -1,0 +1,122 @@
+{
+  "voices": {
+    "narrator": {
+      "name": "Professional Narrator",
+      "language": "en",
+      "audio_url": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/en_f1.flac",
+      "description": "Clear, professional voice for narration",
+      "quality": "high",
+      "tags": ["professional", "formal", "narrative"]
+    },
+    "friendly": {
+      "name": "Friendly Voice",
+      "language": "en",
+      "audio_url": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/en_f1.flac",
+      "description": "Warm and approachable voice",
+      "quality": "high",
+      "tags": ["friendly", "warm", "casual"]
+    },
+    "expert": {
+      "name": "Expert Voice",
+      "language": "en",
+      "audio_url": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/en_f1.flac",
+      "description": "Authoritative voice for knowledge sharing",
+      "quality": "high",
+      "tags": ["expert", "authoritative", "formal"]
+    },
+    "child": {
+      "name": "Child Voice",
+      "language": "en",
+      "audio_url": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/en_f1.flac",
+      "description": "Youthful, energetic voice",
+      "quality": "high",
+      "tags": ["child", "energetic", "playful"]
+    },
+    "mysterious": {
+      "name": "Mysterious Voice",
+      "language": "en",
+      "audio_url": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/en_f1.flac",
+      "description": "Enigmatic and intriguing voice",
+      "quality": "high",
+      "tags": ["mysterious", "dramatic", "theatrical"]
+    },
+    "calm": {
+      "name": "Calm Voice",
+      "language": "en",
+      "audio_url": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/en_f1.flac",
+      "description": "Soothing and meditative voice",
+      "quality": "high",
+      "tags": ["calm", "soothing", "meditative"]
+    }
+  },
+  "characters": {
+    "narrator": {
+      "name": "Narrator",
+      "voice_id": "narrator",
+      "language": "en",
+      "exaggeration": 0.5,
+      "temperature": 0.7,
+      "cfg_weight": 0.6,
+      "description": "Professional narrator voice"
+    },
+    "assistant": {
+      "name": "AI Assistant",
+      "voice_id": "friendly",
+      "language": "en",
+      "exaggeration": 0.6,
+      "temperature": 0.8,
+      "cfg_weight": 0.5,
+      "description": "Friendly AI assistant"
+    },
+    "expert": {
+      "name": "Expert",
+      "voice_id": "expert",
+      "language": "en",
+      "exaggeration": 0.4,
+      "temperature": 0.6,
+      "cfg_weight": 0.7,
+      "description": "Knowledgeable expert"
+    },
+    "luna": {
+      "name": "Luna",
+      "voice_id": "mysterious",
+      "language": "en",
+      "exaggeration": 0.5,
+      "temperature": 0.8,
+      "cfg_weight": 0.6,
+      "description": "Mysterious character voice"
+    },
+    "sage": {
+      "name": "Sage",
+      "voice_id": "calm",
+      "language": "en",
+      "exaggeration": 0.3,
+      "temperature": 0.6,
+      "cfg_weight": 0.8,
+      "description": "Wise and calm character"
+    },
+    "elara": {
+      "name": "Elara",
+      "voice_id": "friendly",
+      "language": "en",
+      "exaggeration": 0.7,
+      "temperature": 0.9,
+      "cfg_weight": 0.5,
+      "description": "Cheerful and warm character"
+    }
+  },
+  "notes": {
+    "adding_voices": "Add new voices by creating entries in the 'voices' section. Each voice needs: name, language, audio_url (path to reference audio sample), description, quality, and tags.",
+    "adding_characters": "Add new characters by creating entries in the 'characters' section. Reference an existing voice_id. Parameters: exaggeration (0-1), temperature (0-1), cfg_weight (0-1) control speech characteristics.",
+    "voice_url_examples": [
+      "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/en_f1.flac",
+      "https://your-s3-bucket.s3.amazonaws.com/voices/voice_name.wav",
+      "/path/to/local/voice/file.flac"
+    ],
+    "parameters": {
+      "exaggeration": "0-1: Controls expressiveness. Higher = more exaggerated",
+      "temperature": "0-1: Controls randomness. Higher = more varied, 0.7 is typical",
+      "cfg_weight": "0-1: Classifier-free guidance weight. Controls adherence to reference voice"
+    }
+  }
+}
