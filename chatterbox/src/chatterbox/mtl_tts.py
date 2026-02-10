@@ -4,7 +4,9 @@ import os
 import tempfile
 import urllib.request
 import urllib.parse
+import re
 
+import boto3
 import librosa
 import torch
 import perth
@@ -232,8 +234,20 @@ class ChatterboxMultilingualTTS:
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=file_ext)
                 temp_file.close()
                 
-                # Download the remote file
-                urllib.request.urlretrieve(wav_fpath, temp_file.name)
+                # Check if this is an S3 URL
+                s3_match = re.match(r'https?://([^.]+)\.s3(?:\.([^.]+))?\.amazonaws\.com/(.+)', wav_fpath)
+                if s3_match:
+                    # Use boto3 for S3 URLs (requires authentication)
+                    bucket_name = s3_match.group(1)
+                    region = s3_match.group(2) or 'us-east-1'  # Default to us-east-1 if no region
+                    object_key = s3_match.group(3)
+                    
+                    s3_client = boto3.client('s3', region_name=region)
+                    s3_client.download_file(bucket_name, object_key, temp_file.name)
+                else:
+                    # Use urllib for non-S3 URLs
+                    urllib.request.urlretrieve(wav_fpath, temp_file.name)
+                
                 actual_wav_path = temp_file.name
                 cleanup_temp = True
             except Exception as e:
