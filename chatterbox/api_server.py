@@ -4,14 +4,42 @@ Production-ready AWS deployment with GPU support and OpenRouter integration
 Provides REST API endpoints for text-to-speech generation with pre-configured character voices
 """
 
+# CRITICAL: Set up Python path FIRST, before any other imports
+# This ensures chatterbox module is findable in all deployment environments
+import sys
+import os
+from pathlib import Path
+
+# Add src directory to Python path for chatterbox imports
+_current_file = Path(__file__).resolve()
+_src_path = _current_file.parent / "src"
+if _src_path.exists() and str(_src_path) not in sys.path:
+    sys.path.insert(0, str(_src_path))
+    print(f"📁 Added to Python path: {_src_path}")
+
+# Also try parent's src for Render deployment structure
+_parent_src_path = _current_file.parent.parent / "chatterbox" / "src"
+if _parent_src_path.exists() and str(_parent_src_path) not in sys.path:
+    sys.path.insert(0, str(_parent_src_path))
+    print(f"📁 Added to Python path: {_parent_src_path}")
+
+# Render-specific paths
+_render_paths = [
+    "/opt/render/project/src/chatterbox/src",
+    "/opt/render/project/src/src",
+]
+for _path in _render_paths:
+    if os.path.exists(_path) and _path not in sys.path:
+        sys.path.insert(0, _path)
+        print(f"📁 Added Render path: {_path}")
+
+# Now proceed with regular imports
 import torch
 import numpy as np
 import json
 import uuid
-import os
 import base64
 import hashlib
-from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 from datetime import datetime
 import logging
@@ -33,8 +61,6 @@ try:
 except ImportError as e:
     print(f"⚠️ Standard import failed: {e}")
     print("🔧 Attempting fallback import with adjusted Python path...")
-    import sys
-    import os
     
     # Add multiple potential paths for different deployment environments
     current_dir = Path(__file__).parent
