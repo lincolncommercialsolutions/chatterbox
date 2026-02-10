@@ -18,15 +18,19 @@ cd chatterbox
 # Install chatterbox package requirements if there are any
 pip install -e . --no-build-isolation
 
-# Verify installation by importing from the src directory
+# Also install as regular package to ensure it's in site-packages
+pip install ./src/
+
+# Verify installation by importing 
 echo "✅ Verifying installation..."
-export PYTHONPATH="$(pwd)/src:${PYTHONPATH}"
 python -c "
 import sys
-sys.path.insert(0, 'src')
+print('Python path:', sys.path)
 import chatterbox
 print('✅ Chatterbox package installed and importable')
 print('Package location:', chatterbox.__file__)
+from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+print('✅ ChatterboxMultilingualTTS import successful')
 "
 
 echo "🚀 Build complete!"
