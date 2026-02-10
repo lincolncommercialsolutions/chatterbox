@@ -91,12 +91,17 @@ except Exception as e:
 export HOST=${HOST:-0.0.0.0}
 export PORT=${PORT:-5000}
 
+# CRITICAL: Set PYTHONPATH as shell environment variable so it persists to api_server.py
+# This is the key fix - the Python verification script sets sys.path but that doesn't persist
+export PYTHONPATH="${PYTHONPATH}:$(pwd)/src:/opt/render/project/src/chatterbox/src:/opt/render/project/src"
+echo "🐍 PYTHONPATH set to: $PYTHONPATH"
+
 echo "🌟 Starting API server with admin interface..."
 echo "📍 Admin Interface will be available at: /admin"
 echo "🌐 Server binding to: $HOST:$PORT"
 
-# Start the server
-python api_server.py
+# Start the server with explicit PYTHONPATH
+PYTHONPATH="$PYTHONPATH" python api_server.py
 
 # Start the API server
 echo "🌟 Starting API server with admin interface..."
