@@ -234,6 +234,30 @@ VOICE_LIBRARY = {
         "description": "Andrew Tate voice - confident and motivational",
         "quality": "high",
         "tags": ["confident", "motivational", "assertive", "custom"]
+    },
+    "peter_griffin": {
+        "name": "Peter Griffin Voice",
+        "language": "en",
+        "audio_url": "https://chatterbox-audio-231399652064.s3.us-east-1.amazonaws.com/chatterbox/voices/peter_griffin.mp4",
+        "description": "Peter Griffin from Family Guy",
+        "quality": "high",
+        "tags": ["funny", "comedy", "cartoon", "custom"]
+    },
+    "lois_griffin": {
+        "name": "Lois Griffin Voice",
+        "language": "en",
+        "audio_url": "https://chatterbox-audio-231399652064.s3.us-east-1.amazonaws.com/chatterbox/voices/lois_voice.mp4",
+        "description": "Lois Griffin from Family Guy",
+        "quality": "high",
+        "tags": ["female", "comedy", "cartoon", "custom"]
+    },
+    "trump": {
+        "name": "Trump Voice",
+        "language": "en",
+        "audio_url": "https://chatterbox-audio-231399652064.s3.us-east-1.amazonaws.com/chatterbox/voices/trump_voice.mp4",
+        "description": "Donald Trump voice impression",
+        "quality": "high",
+        "tags": ["political", "impression", "custom"]
     }
 }
 
@@ -302,6 +326,33 @@ CHARACTER_VOICES = {
         "temperature": 0.6,
         "cfg_weight": 0.5,
         "description": "Confident alpha mindset coach"
+    },
+    "peter_griffin": {
+        "name": "Peter Griffin",
+        "voice_id": "peter_griffin",
+        "language": "en",
+        "exaggeration": 0.8,
+        "temperature": 0.8,
+        "cfg_weight": 0.5,
+        "description": "Funny guy from Family Guy"
+    },
+    "lois_griffin": {
+        "name": "Lois Griffin",
+        "voice_id": "lois_griffin",
+        "language": "en",
+        "exaggeration": 0.6,
+        "temperature": 0.7,
+        "cfg_weight": 0.5,
+        "description": "Peter's wife from Family Guy"
+    },
+    "trump": {
+        "name": "Donald Trump",
+        "voice_id": "trump",
+        "language": "en",
+        "exaggeration": 0.8,
+        "temperature": 0.7,
+        "cfg_weight": 0.5,
+        "description": "The 45th President voice"
     }
 }
 
