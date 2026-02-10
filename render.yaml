@@ -3,11 +3,9 @@ services:
     name: chatterbox-tts-api
     env: python
     buildCommand: |
-      pip install --upgrade pip
-      pip install -r requirements.txt
-      cd chatterbox && pip install -e .
+      chmod +x build.sh && ./build.sh
     startCommand: |
-      cd chatterbox && python api_server.py
+      chmod +x start.sh && ./start.sh
     envVars:
       - key: PYTHON_VERSION
         value: 3.9

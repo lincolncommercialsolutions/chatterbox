@@ -11,26 +11,42 @@ if [ -f "requirements.txt" ]; then
     pip install -r requirements.txt
 fi
 
-# Install the chatterbox package from the chatterbox subdirectory
+# Navigate to chatterbox package directory
 echo "📦 Installing chatterbox package..."
 cd chatterbox
 
-# Install chatterbox package requirements if there are any
+# Install the package properly using pip in editable mode
+echo "📦 Installing chatterbox package in editable mode..."
 pip install -e . --no-build-isolation
 
-# Also install as regular package to ensure it's in site-packages
-pip install ./src/
+# Verify the package structure
+echo "🔍 Checking package structure..."
+ls -la src/
+ls -la src/chatterbox/
 
 # Verify installation by importing 
 echo "✅ Verifying installation..."
 python -c "
 import sys
-print('Python path:', sys.path)
-import chatterbox
-print('✅ Chatterbox package installed and importable')
-print('Package location:', chatterbox.__file__)
-from chatterbox.mtl_tts import ChatterboxMultilingualTTS
-print('✅ ChatterboxMultilingualTTS import successful')
+print('🐍 Python version:', sys.version)
+print('📦 Python path:')
+for p in sys.path:
+    print('  ', p)
+
+try:
+    import chatterbox
+    print('✅ Chatterbox package installed and importable')
+    print('📍 Package location:', chatterbox.__file__)
+    
+    from chatterbox.mtl_tts import ChatterboxMultilingualTTS, SUPPORTED_LANGUAGES
+    print('✅ ChatterboxMultilingualTTS import successful')
+    print('✅ SUPPORTED_LANGUAGES import successful')
+    print('🌍 Supported languages:', len(SUPPORTED_LANGUAGES))
+except Exception as e:
+    print('❌ Import error:', e)
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
 "
 
 echo "🚀 Build complete!"

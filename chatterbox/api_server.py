@@ -27,7 +27,30 @@ from dotenv import load_dotenv
 import io
 import soundfile as sf
 
-from chatterbox.mtl_tts import ChatterboxMultilingualTTS, SUPPORTED_LANGUAGES
+# Import chatterbox modules with fallback for different environments
+try:
+    from chatterbox.mtl_tts import ChatterboxMultilingualTTS, SUPPORTED_LANGUAGES
+except ImportError as e:
+    print(f"⚠️ Standard import failed: {e}")
+    print("🔧 Attempting fallback import with adjusted Python path...")
+    import sys
+    import os
+    
+    # Add src directory to Python path as fallback
+    current_dir = Path(__file__).parent
+    src_path = current_dir / 'src'
+    if src_path.exists():
+        sys.path.insert(0, str(src_path))
+        print(f"📁 Added to Python path: {src_path}")
+    
+    # Try import again
+    try:
+        from chatterbox.mtl_tts import ChatterboxMultilingualTTS, SUPPORTED_LANGUAGES
+        print("✅ Fallback import successful!")
+    except ImportError as e2:
+        print(f"❌ Fallback import also failed: {e2}")
+        print("❌ Critical dependency missing - cannot start server")
+        sys.exit(1)
 
 # Load environment variables from .env file
 env_path = Path(__file__).parent.parent / '.env'
