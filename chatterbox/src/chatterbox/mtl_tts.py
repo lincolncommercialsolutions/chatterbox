@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 from pathlib import Path
 import os
+import tempfile
+import urllib.request
+import urllib.parse
 
 import librosa
 import torch
@@ -220,7 +223,31 @@ class ChatterboxMultilingualTTS:
     
     def prepare_conditionals(self, wav_fpath, exaggeration=0.5):
         ## Load reference wav
-        s3gen_ref_wav, _sr = librosa.load(wav_fpath, sr=S3GEN_SR)
+        # Handle remote URLs by downloading to temporary file
+        if isinstance(wav_fpath, str) and (wav_fpath.startswith('http://') or wav_fpath.startswith('https://')):
+            try:
+                # Create a temporary file with proper extension
+                parsed_url = urllib.parse.urlparse(wav_fpath)
+                file_ext = Path(parsed_url.path).suffix or '.flac'
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=file_ext)
+                temp_file.close()
+                
+                # Download the remote file
+                urllib.request.urlretrieve(wav_fpath, temp_file.name)
+                actual_wav_path = temp_file.name
+                cleanup_temp = True
+            except Exception as e:
+                raise FileNotFoundError(f"Failed to download remote audio file {wav_fpath}: {str(e)}")
+        else:
+            actual_wav_path = wav_fpath
+            cleanup_temp = False
+        
+        try:
+            s3gen_ref_wav, _sr = librosa.load(actual_wav_path, sr=S3GEN_SR)
+        finally:
+            # Clean up temporary file if we created one
+            if cleanup_temp and os.path.exists(actual_wav_path):
+                os.unlink(actual_wav_path)
 
         ref_16k_wav = librosa.resample(s3gen_ref_wav, orig_sr=S3GEN_SR, target_sr=S3_SR)
 
