@@ -182,8 +182,8 @@ function ChatBot() {
 
 ```env
 # AWS Credentials (already configured)
-AWS_ACCESS_KEY_ID=AKIATLYD6PLQFAA3UPLZ
-AWS_SECRET_ACCESS_KEY=***
+AWS_ACCESS_KEY_ID=your-aws-access-key-id
+AWS_SECRET_ACCESS_KEY=your-aws-secret-access-key
 AWS_REGION=us-east-1
 
 # S3 Settings

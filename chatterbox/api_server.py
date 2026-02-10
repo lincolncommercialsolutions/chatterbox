@@ -17,9 +17,12 @@ from datetime import datetime
 import logging
 import traceback
 from functools import lru_cache
+import tempfile
+import shutil
 
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, render_template_string
 from flask_cors import CORS
+from werkzeug.utils import secure_filename
 import io
 import soundfile as sf
 
@@ -350,6 +353,401 @@ def generate_audio_bytes(text: str, character_id: str = "narrator", voice_id: Op
         logger.error(f"Error generating audio: {e}")
         traceback.print_exc()
         raise
+
+
+# ============ Admin Functions ============
+
+def load_config_file():
+    """Load configuration from character_voices.json or voices_config.json"""
+    config_files = ['character_voices.json', 'voices_config.json']
+    
+    for config_file in config_files:
+        config_path = Path(__file__).parent.parent / config_file
+        if config_path.exists():
+            logger.info(f"Loading config from {config_path}")
+            with open(config_path, 'r') as f:
+                return json.load(f), config_path
+    
+    # Return default config if no file found
+    logger.warning("No config file found, using default configuration")
+    return {
+        "voices": dict(VOICE_LIBRARY),
+        "characters": dict(CHARACTER_VOICES)
+    }, None
+
+def save_config_file(config, config_path=None):
+    """Save configuration to file"""
+    if config_path is None:
+        config_path = Path(__file__).parent.parent / 'character_voices.json'
+    
+    logger.info(f"Saving config to {config_path}")
+    with open(config_path, 'w') as f:
+        json.dump(config, f, indent=2)
+
+def reload_voices_and_characters():
+    """Reload voices and characters from config file"""
+    global VOICE_LIBRARY, CHARACTER_VOICES
+    
+    config, _ = load_config_file()
+    if 'voices' in config:
+        VOICE_LIBRARY.update(config['voices'])
+    if 'characters' in config:
+        CHARACTER_VOICES.update(config['characters'])
+    
+    logger.info(f"Reloaded {len(VOICE_LIBRARY)} voices and {len(CHARACTER_VOICES)} characters")
+
+def upload_audio_to_s3(file_data, filename, voice_id):
+    """Upload audio file to S3"""
+    if not S3_ENABLED or not S3_CLIENT:
+        raise Exception("S3 not configured")
+    
+    # Ensure safe filename
+    safe_filename = secure_filename(filename)
+    file_ext = Path(safe_filename).suffix
+    s3_key = f"{S3_VOICES_PREFIX}{voice_id}{file_ext}"
+    
+    try:
+        # Upload to S3
+        S3_CLIENT.put_object(
+            Bucket=S3_BUCKET,
+            Key=s3_key,
+            Body=file_data,
+            ContentType=f"audio/{file_ext[1:]}" if file_ext else "audio/wav"
+        )
+        
+        # Generate public URL
+        audio_url = f"https://{S3_BUCKET}.s3.{S3_REGION}.amazonaws.com/{s3_key}"
+        logger.info(f"Uploaded audio to S3: {audio_url}")
+        return audio_url
+        
+    except Exception as e:
+        logger.error(f"S3 upload failed: {e}")
+        raise
+
+# ============ Admin API Routes ============
+
+@app.route('/admin')
+def admin_interface():
+    """Serve admin interface"""
+    return render_template_string(ADMIN_HTML_TEMPLATE)
+
+@app.route('/admin/voices', methods=['GET'])
+def admin_get_voices():
+    """Get all voices with admin details"""
+    try:
+        voices_with_details = {}
+        for voice_id, voice_data in VOICE_LIBRARY.items():
+            # Find which characters use this voice
+            using_characters = [
+                char_id for char_id, char_data in CHARACTER_VOICES.items()
+                if char_data.get('voice_id') == voice_id
+            ]
+            
+            voices_with_details[voice_id] = {
+                **voice_data,
+                "used_by_characters": using_characters
+            }
+        
+        return jsonify({
+            "success": True,
+            "voices": voices_with_details,
+            "total": len(voices_with_details)
+        })
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/admin/characters', methods=['GET'])
+def admin_get_characters():
+    """Get all characters with admin details"""
+    try:
+        return jsonify({
+            "success": True,
+            "characters": CHARACTER_VOICES,
+            "total": len(CHARACTER_VOICES)
+        })
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/admin/upload-voice', methods=['POST'])
+def admin_upload_voice():
+    """Upload new voice audio file"""
+    try:
+        # Check if file is in request
+        if 'audio_file' not in request.files:
+            return jsonify({"success": False, "error": "No audio file provided"}), 400
+        
+        file = request.files['audio_file']
+        if file.filename == '':
+            return jsonify({"success": False, "error": "No file selected"}), 400
+        
+        # Get form data
+        voice_id = request.form.get('voice_id', '').strip()
+        voice_name = request.form.get('voice_name', '').strip()
+        description = request.form.get('description', '').strip()
+        language = request.form.get('language', 'en').strip()
+        tags = request.form.get('tags', '').strip()
+        
+        if not voice_id or not voice_name:
+            return jsonify({"success": False, "error": "Voice ID and name are required"}), 400
+        
+        # Check if voice ID already exists
+        if voice_id in VOICE_LIBRARY:
+            return jsonify({"success": False, "error": f"Voice ID '{voice_id}' already exists"}), 400
+        
+        # Read file data
+        file_data = file.read()
+        
+        # Upload to S3 (if enabled) or save locally
+        if S3_ENABLED:
+            audio_url = upload_audio_to_s3(file_data, file.filename, voice_id)
+        else:
+            # Save locally as fallback
+            local_dir = Path(__file__).parent.parent / 'audio_samples'
+            local_dir.mkdir(exist_ok=True)
+            local_path = local_dir / f"{voice_id}_{file.filename}"
+            with open(local_path, 'wb') as f:
+                f.write(file_data)
+            audio_url = str(local_path)
+        
+        # Create voice configuration
+        voice_config = {
+            "name": voice_name,
+            "language": language,
+            "audio_url": audio_url,
+            "description": description or f"Custom voice: {voice_name}",
+            "quality": "high",
+            "tags": [tag.strip() for tag in tags.split(',') if tag.strip()] if tags else ["custom"]
+        }
+        
+        # Add to in-memory config
+        VOICE_LIBRARY[voice_id] = voice_config
+        
+        # Save to configuration file
+        config, config_path = load_config_file()
+        if 'voices' not in config:
+            config['voices'] = {}
+        config['voices'][voice_id] = voice_config
+        save_config_file(config, config_path)
+        
+        logger.info(f"Added new voice: {voice_id} -> {audio_url}")
+        
+        return jsonify({
+            "success": True,
+            "voice_id": voice_id,
+            "voice_config": voice_config,
+            "message": f"Voice '{voice_name}' uploaded successfully"
+        })
+        
+    except Exception as e:
+        logger.error(f"Voice upload failed: {e}")
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/admin/create-character', methods=['POST'])
+def admin_create_character():
+    """Create new character"""
+    try:
+        data = request.get_json()
+        
+        character_id = data.get('character_id', '').strip()
+        character_name = data.get('character_name', '').strip()
+        voice_id = data.get('voice_id', '').strip()
+        language = data.get('language', 'en').strip()
+        description = data.get('description', '').strip()
+        system_prompt = data.get('system_prompt', '').strip()
+        
+        # Generation parameters
+        exaggeration = float(data.get('exaggeration', 0.5))
+        temperature = float(data.get('temperature', 0.7))
+        cfg_weight = float(data.get('cfg_weight', 0.6))
+        
+        # UI metadata
+        emoji = data.get('emoji', '🤖').strip()
+        color = data.get('color', '#4A90E2').strip()
+        
+        if not character_id or not character_name or not voice_id:
+            return jsonify({"success": False, "error": "Character ID, name, and voice ID are required"}), 400
+        
+        if character_id in CHARACTER_VOICES:
+            return jsonify({"success": False, "error": f"Character ID '{character_id}' already exists"}), 400
+        
+        if voice_id not in VOICE_LIBRARY:
+            return jsonify({"success": False, "error": f"Voice ID '{voice_id}' does not exist"}), 400
+        
+        # Create character configuration
+        character_config = {
+            "name": character_name,
+            "voice_id": voice_id,
+            "language": language,
+            "description": description or f"Character: {character_name}",
+            "exaggeration": exaggeration,
+            "temperature": temperature,
+            "cfg_weight": cfg_weight
+        }
+        
+        # Add optional fields
+        if system_prompt:
+            character_config["system_prompt"] = system_prompt
+        if emoji or color:
+            character_config["metadata"] = {}
+            if emoji:
+                character_config["metadata"]["emoji"] = emoji
+            if color:
+                character_config["metadata"]["color"] = color
+        
+        # Add to in-memory config
+        CHARACTER_VOICES[character_id] = character_config
+        
+        # Save to configuration file
+        config, config_path = load_config_file()
+        if 'characters' not in config:
+            config['characters'] = {}
+        config['characters'][character_id] = character_config
+        save_config_file(config, config_path)
+        
+        logger.info(f"Created new character: {character_id}")
+        
+        return jsonify({
+            "success": True,
+            "character_id": character_id,
+            "character_config": character_config,
+            "message": f"Character '{character_name}' created successfully"
+        })
+        
+    except Exception as e:
+        logger.error(f"Character creation failed: {e}")
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/admin/delete-voice/<voice_id>', methods=['DELETE'])
+def admin_delete_voice(voice_id):
+    """Delete voice (if not used by any character)"""
+    try:
+        if voice_id not in VOICE_LIBRARY:
+            return jsonify({"success": False, "error": f"Voice '{voice_id}' does not exist"}), 404
+        
+        # Check if voice is used by any character
+        using_characters = [
+            char_id for char_id, char_data in CHARACTER_VOICES.items()
+            if char_data.get('voice_id') == voice_id
+        ]
+        
+        if using_characters:
+            return jsonify({
+                "success": False,
+                "error": f"Voice '{voice_id}' is used by characters: {', '.join(using_characters)}"
+            }), 400
+        
+        # Remove from memory
+        del VOICE_LIBRARY[voice_id]
+        
+        # Remove from config file
+        config, config_path = load_config_file()
+        if 'voices' in config and voice_id in config['voices']:
+            del config['voices'][voice_id]
+            save_config_file(config, config_path)
+        
+        logger.info(f"Deleted voice: {voice_id}")
+        
+        return jsonify({
+            "success": True,
+            "message": f"Voice '{voice_id}' deleted successfully"
+        })
+        
+    except Exception as e:
+        logger.error(f"Voice deletion failed: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/admin/delete-character/<character_id>', methods=['DELETE'])
+def admin_delete_character(character_id):
+    """Delete character"""
+    try:
+        if character_id not in CHARACTER_VOICES:
+            return jsonify({"success": False, "error": f"Character '{character_id}' does not exist"}), 404
+        
+        # Remove from memory
+        del CHARACTER_VOICES[character_id]
+        
+        # Remove from config file
+        config, config_path = load_config_file()
+        if 'characters' in config and character_id in config['characters']:
+            del config['characters'][character_id]
+            save_config_file(config, config_path)
+        
+        logger.info(f"Deleted character: {character_id}")
+        
+        return jsonify({
+            "success": True,
+            "message": f"Character '{character_id}' deleted successfully"
+        })
+        
+    except Exception as e:
+        logger.error(f"Character deletion failed: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/admin/test-voice/<voice_id>', methods=['POST'])
+def admin_test_voice(voice_id):
+    """Test a voice by generating sample audio"""
+    try:
+        data = request.get_json() or {}
+        test_text = data.get('text', "Hello, this is a test of the voice.")
+        
+        if voice_id not in VOICE_LIBRARY:
+            return jsonify({"success": False, "error": f"Voice '{voice_id}' not found"}), 404
+        
+        # Generate audio using a temporary character
+        temp_character = {
+            "voice_id": voice_id,
+            "language": "en",
+            "exaggeration": 0.5,
+            "temperature": 0.7,
+            "cfg_weight": 0.6
+        }
+        
+        # Temporarily add test character
+        test_char_id = f"__test__{voice_id}"
+        CHARACTER_VOICES[test_char_id] = temp_character
+        
+        try:
+            audio_bytes, sample_rate, duration = generate_audio_bytes(
+                test_text, test_char_id, use_cache=False
+            )
+            
+            # Convert to base64
+            audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+            
+            return jsonify({
+                "success": True,
+                "audio": audio_b64,
+                "duration": duration,
+                "sample_rate": sample_rate,
+                "text": test_text
+            })
+            
+        finally:
+            # Clean up temp character
+            if test_char_id in CHARACTER_VOICES:
+                del CHARACTER_VOICES[test_char_id]
+        
+    except Exception as e:
+        logger.error(f"Voice test failed: {e}")
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/admin/reload-config', methods=['POST'])
+def admin_reload_config():
+    """Reload configuration from file"""
+    try:
+        reload_voices_and_characters()
+        return jsonify({
+            "success": True,
+            "message": f"Reloaded {len(VOICE_LIBRARY)} voices and {len(CHARACTER_VOICES)} characters"
+        })
+    except Exception as e:
+        logger.error(f"Config reload failed: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 # ============ API Routes ============
@@ -804,6 +1202,901 @@ def create_app():
     return app
 
 
+# ============ Admin Interface HTML Template ============
+
+ADMIN_HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chatterbox TTS Admin</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            font-weight: 300;
+        }
+        
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .tabs {
+            display: flex;
+            background: #f8f9fa;
+            border-bottom: 2px solid #e9ecef;
+        }
+        
+        .tab {
+            flex: 1;
+            padding: 15px 20px;
+            cursor: pointer;
+            border: none;
+            background: transparent;
+            font-size: 1em;
+            transition: all 0.3s ease;
+            border-bottom: 3px solid transparent;
+        }
+        
+        .tab:hover {
+            background: #e9ecef;
+        }
+        
+        .tab.active {
+            background: white;
+            border-bottom-color: #4a90e2;
+            color: #4a90e2;
+            font-weight: 600;
+        }
+        
+        .tab-content {
+            padding: 30px;
+        }
+        
+        .tab-pane {
+            display: none;
+        }
+        
+        .tab-pane.active {
+            display: block;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #495057;
+        }
+        
+        .form-control {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s ease;
+        }
+        
+        .form-control:focus {
+            outline: none;
+            border-color: #4a90e2;
+            box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.1);
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(74, 144, 226, 0.3);
+        }
+        
+        .btn-danger {
+            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(231, 76, 60, 0.3);
+        }
+        
+        .btn-success {
+            background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
+            color: white;
+        }
+        
+        .btn-success:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(46, 204, 113, 0.3);
+        }
+        
+        .alert {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: none;
+        }
+        
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border-left: 4px solid #28a745;
+        }
+        
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border-left: 4px solid #dc3545;
+        }
+        
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        
+        .card {
+            background: white;
+            border: 2px solid #e9ecef;
+            border-radius: 12px;
+            padding: 20px;
+            transition: all 0.3s ease;
+        }
+        
+        .card:hover {
+            border-color: #4a90e2;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+        }
+        
+        .card-header {
+            display: flex;
+            justify-content: between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #e9ecef;
+        }
+        
+        .card-title {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #495057;
+            margin: 0;
+        }
+        
+        .card-actions {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 0.9em;
+        }
+        
+        .voice-info, .character-info {
+            margin-bottom: 10px;
+        }
+        
+        .voice-info strong, .character-info strong {
+            color: #4a90e2;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+            color: #6c757d;
+        }
+        
+        .loading.show {
+            display: block;
+        }
+        
+        .file-upload {
+            position: relative;
+            display: inline-block;
+            cursor: pointer;
+            width: 100%;
+        }
+        
+        .file-upload input[type="file"] {
+            position: absolute;
+            opacity: 0;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+        
+        .file-upload-label {
+            display: block;
+            padding: 20px;
+            border: 2px dashed #4a90e2;
+            border-radius: 8px;
+            text-align: center;
+            color: #4a90e2;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        
+        .file-upload:hover .file-upload-label {
+            background: rgba(74, 144, 226, 0.1);
+            border-color: #357abd;
+        }
+        
+        .range-group {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            margin: 20px 0;
+        }
+        
+        .range-item {
+            text-align: center;
+        }
+        
+        .range-item label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+            color: #495057;
+        }
+        
+        .range-item input[type="range"] {
+            width: 100%;
+            margin: 10px 0;
+        }
+        
+        .range-item .value {
+            font-weight: 600;
+            color: #4a90e2;
+            font-size: 1.1em;
+        }
+        
+        audio {
+            width: 100%;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎙️ Chatterbox TTS Admin</h1>
+            <p>Manage voices, characters, and audio generation settings</p>
+        </div>
+        
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('voices')">🎵 Voices</button>
+            <button class="tab" onclick="showTab('characters')">🤖 Characters</button>
+            <button class="tab" onclick="showTab('upload')">⬆️ Upload Voice</button>
+            <button class="tab" onclick="showTab('create')">✨ Create Character</button>
+        </div>
+        
+        <div class="tab-content">
+            <!-- Voices Tab -->
+            <div id="voices-tab" class="tab-pane active">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2>Voice Library</h2>
+                    <button class="btn btn-primary" onclick="loadVoices()">🔄 Refresh</button>
+                </div>
+                <div id="voices-container">
+                    <div class="loading show">Loading voices...</div>
+                </div>
+            </div>
+            
+            <!-- Characters Tab -->
+            <div id="characters-tab" class="tab-pane">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2>Character Profiles</h2>
+                    <button class="btn btn-primary" onclick="loadCharacters()">🔄 Refresh</button>
+                </div>
+                <div id="characters-container">
+                    <div class="loading show">Loading characters...</div>
+                </div>
+            </div>
+            
+            <!-- Upload Voice Tab -->
+            <div id="upload-tab" class="tab-pane">
+                <h2>Upload New Voice</h2>
+                <div id="upload-messages"></div>
+                
+                <form id="upload-form" onsubmit="uploadVoice(event)">
+                    <div class="form-group">
+                        <label>Audio File (WAV, MP3, or FLAC)</label>
+                        <div class="file-upload">
+                            <input type="file" name="audio_file" accept=".wav,.mp3,.flac" required>
+                            <div class="file-upload-label">
+                                🎵 Click to select audio file or drag & drop
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div class="form-group">
+                            <label for="voice_id">Voice ID *</label>
+                            <input type="text" class="form-control" name="voice_id" placeholder="e.g., my_voice" required>
+                            <small>Unique identifier (letters, numbers, underscores only)</small>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="voice_name">Voice Name *</label>
+                            <input type="text" class="form-control" name="voice_name" placeholder="e.g., My Custom Voice" required>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="description">Description</label>
+                        <textarea class="form-control" name="description" rows="3" placeholder="Describe this voice..."></textarea>
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div class="form-group">
+                            <label for="language">Language</label>
+                            <select class="form-control" name="language">
+                                <option value="en">English</option>
+                                <option value="es">Spanish</option>
+                                <option value="fr">French</option>
+                                <option value="de">German</option>
+                                <option value="it">Italian</option>
+                                <option value="pt">Portuguese</option>
+                                <option value="pl">Polish</option>
+                                <option value="tr">Turkish</option>
+                                <option value="ru">Russian</option>
+                                <option value="nl">Dutch</option>
+                                <option value="cs">Czech</option>
+                                <option value="ar">Arabic</option>
+                                <option value="zh-cn">Chinese (Simplified)</option>
+                                <option value="ja">Japanese</option>
+                                <option value="hu">Hungarian</option>
+                                <option value="ko">Korean</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="tags">Tags (comma separated)</label>
+                            <input type="text" class="form-control" name="tags" placeholder="e.g., calm, professional, male">
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary">⬆️ Upload Voice</button>
+                </form>
+            </div>
+            
+            <!-- Create Character Tab -->
+            <div id="create-tab" class="tab-pane">
+                <h2>Create New Character</h2>
+                <div id="create-messages"></div>
+                
+                <form id="create-form" onsubmit="createCharacter(event)">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div class="form-group">
+                            <label for="character_id">Character ID *</label>
+                            <input type="text" class="form-control" name="character_id" placeholder="e.g., my_character" required>
+                            <small>Unique identifier (letters, numbers, underscores only)</small>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="character_name">Character Name *</label>
+                            <input type="text" class="form-control" name="character_name" placeholder="e.g., My Character" required>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="voice_id_select">Voice *</label>
+                        <select class="form-control" name="voice_id" id="voice_id_select" required>
+                            <option value="">Select a voice...</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="description">Description</label>
+                        <textarea class="form-control" name="description" rows="2" placeholder="Describe this character..."></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="system_prompt">System Prompt (Optional)</label>
+                        <textarea class="form-control" name="system_prompt" rows="3" placeholder="Instructions for this character's behavior..."></textarea>
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div class="form-group">
+                            <label for="language">Language</label>
+                            <select class="form-control" name="language">
+                                <option value="en">English</option>
+                                <option value="es">Spanish</option>
+                                <option value="fr">French</option>
+                                <option value="de">German</option>
+                                <option value="it">Italian</option>
+                                <option value="pt">Portuguese</option>
+                                <option value="pl">Polish</option>
+                                <option value="tr">Turkish</option>
+                                <option value="ru">Russian</option>
+                                <option value="nl">Dutch</option>
+                                <option value="cs">Czech</option>
+                                <option value="ar">Arabic</option>
+                                <option value="zh-cn">Chinese (Simplified)</option>
+                                <option value="ja">Japanese</option>
+                                <option value="hu">Hungarian</option>
+                                <option value="ko">Korean</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="emoji">Emoji</label>
+                            <input type="text" class="form-control" name="emoji" placeholder="🤖" maxlength="2">
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="color">Color</label>
+                        <input type="color" class="form-control" name="color" value="#4A90E2">
+                    </div>
+                    
+                    <h3>Generation Parameters</h3>
+                    <div class="range-group">
+                        <div class="range-item">
+                            <label>Exaggeration</label>
+                            <input type="range" name="exaggeration" min="0" max="1" step="0.1" value="0.5" oninput="updateRangeValue(this)">
+                            <div class="value">0.5</div>
+                            <small>Speech expressiveness</small>
+                        </div>
+                        
+                        <div class="range-item">
+                            <label>Temperature</label>
+                            <input type="range" name="temperature" min="0" max="1" step="0.1" value="0.7" oninput="updateRangeValue(this)">
+                            <div class="value">0.7</div>
+                            <small>Voice variation</small>
+                        </div>
+                        
+                        <div class="range-item">
+                            <label>CFG Weight</label>
+                            <input type="range" name="cfg_weight" min="0" max="1" step="0.1" value="0.6" oninput="updateRangeValue(this)">
+                            <div class="value">0.6</div>
+                            <small>Voice adherence</small>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary">✨ Create Character</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function showTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-pane').forEach(pane => {
+                pane.classList.remove('active');
+            });
+            
+            // Remove active class from all tab buttons
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById(tabName + '-tab').classList.add('active');
+            event.target.classList.add('active');
+            
+            // Load data if needed
+            if (tabName === 'voices') loadVoices();
+            if (tabName === 'characters') loadCharacters();
+            if (tabName === 'create') loadVoicesForSelect();
+        }
+        
+        function updateRangeValue(input) {
+            const valueDisplay = input.parentNode.querySelector('.value');
+            valueDisplay.textContent = input.value;
+        }
+        
+        function showMessage(containerId, message, type = 'success') {
+            const container = document.getElementById(containerId);
+            container.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+            setTimeout(() => {
+                container.innerHTML = '';
+            }, 5000);
+        }
+        
+        async function loadVoices() {
+            const container = document.getElementById('voices-container');
+            container.innerHTML = '<div class="loading show">Loading voices...</div>';
+            
+            try {
+                const response = await fetch('/admin/voices');
+                const data = await response.json();
+                
+                if (data.success) {
+                    displayVoices(data.voices);
+                } else {
+                    container.innerHTML = `<div class="alert alert-error">Error: ${data.error}</div>`;
+                }
+            } catch (error) {
+                container.innerHTML = `<div class="alert alert-error">Failed to load voices: ${error.message}</div>`;
+            }
+        }
+        
+        function displayVoices(voices) {
+            const container = document.getElementById('voices-container');
+            
+            if (Object.keys(voices).length === 0) {
+                container.innerHTML = '<p>No voices found.</p>';
+                return;
+            }
+            
+            let html = '<div class="cards-grid">';
+            
+            for (const [voiceId, voice] of Object.entries(voices)) {
+                html += `
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">${voice.name} (${voiceId})</h3>
+                            <div class="card-actions">
+                                <button class="btn btn-success btn-small" onclick="testVoice('${voiceId}')">🎵 Test</button>
+                                <button class="btn btn-danger btn-small" onclick="deleteVoice('${voiceId}')">🗑️ Delete</button>
+                            </div>
+                        </div>
+                        
+                        <div class="voice-info">
+                            <p><strong>Language:</strong> ${voice.language}</p>
+                            <p><strong>Description:</strong> ${voice.description}</p>
+                            <p><strong>Quality:</strong> ${voice.quality}</p>
+                            ${voice.tags ? `<p><strong>Tags:</strong> ${voice.tags.join(', ')}</p>` : ''}
+                            ${voice.used_by_characters && voice.used_by_characters.length > 0 ? 
+                                `<p><strong>Used by:</strong> ${voice.used_by_characters.join(', ')}</p>` : 
+                                '<p><strong>Used by:</strong> No characters</p>'
+                            }
+                        </div>
+                        
+                        <div id="test-${voiceId}"></div>
+                    </div>
+                `;
+            }
+            
+            html += '</div>';
+            container.innerHTML = html;
+        }
+        
+        async function loadCharacters() {
+            const container = document.getElementById('characters-container');
+            container.innerHTML = '<div class="loading show">Loading characters...</div>';
+            
+            try {
+                const response = await fetch('/admin/characters');
+                const data = await response.json();
+                
+                if (data.success) {
+                    displayCharacters(data.characters);
+                } else {
+                    container.innerHTML = `<div class="alert alert-error">Error: ${data.error}</div>`;
+                }
+            } catch (error) {
+                container.innerHTML = `<div class="alert alert-error">Failed to load characters: ${error.message}</div>`;
+            }
+        }
+        
+        function displayCharacters(characters) {
+            const container = document.getElementById('characters-container');
+            
+            if (Object.keys(characters).length === 0) {
+                container.innerHTML = '<p>No characters found.</p>';
+                return;
+            }
+            
+            let html = '<div class="cards-grid">';
+            
+            for (const [characterId, character] of Object.entries(characters)) {
+                const emoji = character.metadata?.emoji || '🤖';
+                const color = character.metadata?.color || '#4A90E2';
+                
+                html += `
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title" style="color: ${color}">
+                                ${emoji} ${character.name} (${characterId})
+                            </h3>
+                            <div class="card-actions">
+                                <button class="btn btn-success btn-small" onclick="testCharacter('${characterId}')">🎵 Test</button>
+                                <button class="btn btn-danger btn-small" onclick="deleteCharacter('${characterId}')">🗑️ Delete</button>
+                            </div>
+                        </div>
+                        
+                        <div class="character-info">
+                            <p><strong>Voice:</strong> ${character.voice_id}</p>
+                            <p><strong>Language:</strong> ${character.language}</p>
+                            <p><strong>Description:</strong> ${character.description}</p>
+                            ${character.system_prompt ? `<p><strong>System Prompt:</strong> ${character.system_prompt}</p>` : ''}
+                            <p><strong>Parameters:</strong> 
+                                Exaggeration: ${character.exaggeration}, 
+                                Temperature: ${character.temperature}, 
+                                CFG Weight: ${character.cfg_weight}
+                            </p>
+                        </div>
+                        
+                        <div id="test-char-${characterId}"></div>
+                    </div>
+                `;
+            }
+            
+            html += '</div>';
+            container.innerHTML = html;
+        }
+        
+        // [Rest of JavaScript functions continue...]
+        async function loadVoicesForSelect() {
+            try {
+                const response = await fetch('/admin/voices');
+                const data = await response.json();
+                
+                if (data.success) {
+                    const select = document.getElementById('voice_id_select');
+                    select.innerHTML = '<option value="">Select a voice...</option>';
+                    
+                    for (const [voiceId, voice] of Object.entries(data.voices)) {
+                        select.innerHTML += `<option value="${voiceId}">${voice.name} (${voiceId})</option>`;
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to load voices for select:', error);
+            }
+        }
+        
+        async function uploadVoice(event) {
+            event.preventDefault();
+            
+            const formData = new FormData(event.target);
+            const submitButton = event.target.querySelector('button[type="submit"]');
+            
+            submitButton.disabled = true;
+            submitButton.textContent = '⏳ Uploading...';
+            
+            try {
+                const response = await fetch('/admin/upload-voice', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showMessage('upload-messages', `✅ ${data.message}`, 'success');
+                    event.target.reset();
+                    document.querySelector('.file-upload-label').textContent = '🎵 Click to select audio file or drag & drop';
+                } else {
+                    showMessage('upload-messages', `❌ ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showMessage('upload-messages', `❌ Upload failed: ${error.message}`, 'error');
+            } finally {
+                submitButton.disabled = false;
+                submitButton.textContent = '⬆️ Upload Voice';
+            }
+        }
+        
+        async function createCharacter(event) {
+            event.preventDefault();
+            
+            const formData = new FormData(event.target);
+            const data = Object.fromEntries(formData.entries());
+            
+            const submitButton = event.target.querySelector('button[type="submit"]');
+            submitButton.disabled = true;
+            submitButton.textContent = '⏳ Creating...';
+            
+            try {
+                const response = await fetch('/admin/create-character', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage('create-messages', `✅ ${result.message}`, 'success');
+                    event.target.reset();
+                    // Reset range values
+                    document.querySelectorAll('input[type="range"]').forEach(input => {
+                        input.value = input.defaultValue;
+                        updateRangeValue(input);
+                    });
+                } else {
+                    showMessage('create-messages', `❌ ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showMessage('create-messages', `❌ Creation failed: ${error.message}`, 'error');
+            } finally {
+                submitButton.disabled = false;
+                submitButton.textContent = '✨ Create Character';
+            }
+        }
+        
+        async function testVoice(voiceId) {
+            const testContainer = document.getElementById(`test-${voiceId}`);
+            testContainer.innerHTML = '<div class="loading show">Generating test audio...</div>';
+            
+            try {
+                const response = await fetch(`/admin/test-voice/${voiceId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ text: "Hello, this is a test of the voice." })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    const audioUrl = `data:audio/wav;base64,${data.audio}`;
+                    testContainer.innerHTML = `
+                        <audio controls>
+                            <source src="${audioUrl}" type="audio/wav">
+                            Your browser does not support audio playback.
+                        </audio>
+                        <p><small>Duration: ${data.duration.toFixed(1)}s</small></p>
+                    `;
+                } else {
+                    testContainer.innerHTML = `<div class="alert alert-error">Test failed: ${data.error}</div>`;
+                }
+            } catch (error) {
+                testContainer.innerHTML = `<div class="alert alert-error">Test failed: ${error.message}</div>`;
+            }
+        }
+        
+        async function testCharacter(characterId) {
+            const testContainer = document.getElementById(`test-char-${characterId}`);
+            testContainer.innerHTML = '<div class="loading show">Generating test audio...</div>';
+            
+            try {
+                const response = await fetch('/generate-audio', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ 
+                        text: "Hello, this is a test of the character voice.",
+                        character: characterId
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    const audioUrl = data.audio_url || `data:audio/wav;base64,${data.audio}`;
+                    testContainer.innerHTML = `
+                        <audio controls>
+                            <source src="${audioUrl}" type="audio/wav">
+                            Your browser does not support audio playback.
+                        </audio>
+                        <p><small>Duration: ${data.duration.toFixed(1)}s</small></p>
+                    `;
+                } else {
+                    testContainer.innerHTML = `<div class="alert alert-error">Test failed: ${data.error}</div>`;
+                }
+            } catch (error) {
+                testContainer.innerHTML = `<div class="alert alert-error">Test failed: ${error.message}</div>`;
+            }
+        }
+        
+        async function deleteVoice(voiceId) {
+            if (!confirm(`Are you sure you want to delete voice "${voiceId}"?`)) return;
+            
+            try {
+                const response = await fetch(`/admin/delete-voice/${voiceId}`, {
+                    method: 'DELETE'
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showMessage('voices-container', `✅ ${data.message}`, 'success');
+                    loadVoices(); // Reload voices list
+                } else {
+                    showMessage('voices-container', `❌ ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showMessage('voices-container', `❌ Delete failed: ${error.message}`, 'error');
+            }
+        }
+        
+        async function deleteCharacter(characterId) {
+            if (!confirm(`Are you sure you want to delete character "${characterId}"?`)) return;
+            
+            try {
+                const response = await fetch(`/admin/delete-character/${characterId}`, {
+                    method: 'DELETE'
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showMessage('characters-container', `✅ ${data.message}`, 'success');
+                    loadCharacters(); // Reload characters list
+                } else {
+                    showMessage('characters-container', `❌ ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showMessage('characters-container', `❌ Delete failed: ${error.message}`, 'error');
+            }
+        }
+        
+        // File upload drag & drop
+        document.addEventListener('DOMContentLoaded', function() {
+            const fileInput = document.querySelector('input[type="file"]');
+            const fileLabel = document.querySelector('.file-upload-label');
+            
+            if (fileInput && fileLabel) {
+                fileInput.addEventListener('change', function() {
+                    if (this.files.length > 0) {
+                        fileLabel.textContent = `📁 ${this.files[0].name}`;
+                    }
+                });
+            }
+            
+            // Load initial data
+            loadVoices();
+            loadVoicesForSelect();
+        });
+    </script>
+</body>
+</html>
+"""
+
+
 if __name__ == '__main__':
     app = create_app()
     
@@ -840,6 +2133,15 @@ if __name__ == '__main__':
     logger.info("  GET  /voices                      - List available voices")
     logger.info("  GET  /voices/<voice_id>           - Get voice details")
     logger.info("  GET  /languages                   - List supported languages")
+    logger.info("  🔧 ADMIN INTERFACE:")
+    logger.info("  GET  /admin                       - Admin web interface")
+    logger.info("  GET  /admin/voices                - Admin voice management API")
+    logger.info("  GET  /admin/characters            - Admin character management API")
+    logger.info("  POST /admin/upload-voice          - Upload new voice audio")
+    logger.info("  POST /admin/create-character      - Create new character")
+    logger.info("  POST /admin/test-voice/<id>       - Test voice generation")
+    logger.info("  DELETE /admin/delete-voice/<id>   - Delete voice")
+    logger.info("  DELETE /admin/delete-character/<id> - Delete character")
     logger.info("=" * 60)
     
     # Run server - production-ready configuration

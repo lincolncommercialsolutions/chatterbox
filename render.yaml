@@ -1,0 +1,51 @@
+services:
+  - type: web
+    name: chatterbox-tts-api
+    env: python
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+      cd chatterbox && pip install -e .
+    startCommand: |
+      cd chatterbox && python api_server.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        value: us-east-1
+      - key: S3_ENABLED
+        value: true
+      - key: S3_BUCKET_NAME
+        value: chatterbox-audio-231399652064
+      - key: S3_AUDIO_PREFIX
+        value: chatterbox/audio/
+      - key: S3_VOICES_PREFIX
+        value: chatterbox/voices/
+      - key: S3_PRESIGNED_URL_EXPIRY
+        value: 3600
+      - key: API_PORT
+        value: 5000
+      - key: API_HOST
+        value: 0.0.0.0
+      - key: LOG_LEVEL
+        value: INFO
+      - key: CORS_ORIGINS
+        value: http://localhost:3000,https://*.vercel.app,https://*.vercel.sh
+      - key: MAX_TEXT_LENGTH
+        value: 500
+      - key: DEFAULT_MAX_TOKENS
+        value: 400
+      - key: BATCH_SIZE
+        value: 1
+      - key: CACHE_ENABLED
+        value: true
+      - key: CACHE_SIZE
+        value: 100
+      - key: DEFAULT_CHARACTER
+        value: assistant
+      - key: CHARACTER_CONFIG_FILE
+        value: character_voices.json
