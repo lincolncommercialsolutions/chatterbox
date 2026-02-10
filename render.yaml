@@ -2,6 +2,7 @@ services:
   - type: web
     name: chatterbox-tts-api
     env: python
+    rootDir: .
     buildCommand: |
       chmod +x build.sh && ./build.sh
     startCommand: |

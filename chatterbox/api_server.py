@@ -36,12 +36,21 @@ except ImportError as e:
     import sys
     import os
     
-    # Add src directory to Python path as fallback
+    # Add multiple potential paths for different deployment environments
     current_dir = Path(__file__).parent
-    src_path = current_dir / 'src'
-    if src_path.exists():
-        sys.path.insert(0, str(src_path))
-        print(f"📁 Added to Python path: {src_path}")
+    potential_paths = [
+        current_dir / 'src',  # Local development
+        current_dir.parent / 'chatterbox' / 'src',  # Root > chatterbox > src
+        Path('/opt/render/project/src/chatterbox/src'),  # Render specific
+        Path('/opt/render/project/src'),  # Render root src
+        current_dir.parent / 'src',  # Alternative structure
+    ]
+    
+    # Add all existing paths to sys.path
+    for path in potential_paths:
+        if path.exists() and str(path) not in sys.path:
+            sys.path.insert(0, str(path))
+            print(f"📁 Added to Python path: {path}")
     
     # Try import again
     try:
@@ -49,6 +58,22 @@ except ImportError as e:
         print("✅ Fallback import successful!")
     except ImportError as e2:
         print(f"❌ Fallback import also failed: {e2}")
+        print("🔍 Debugging info:")
+        print(f"  Current file: {__file__}")
+        print(f"  Current dir: {current_dir}")
+        print(f"  Working dir: {os.getcwd()}")
+        print("  Python paths:")
+        for p in sys.path[:10]:  # Show first 10 to avoid clutter
+            print(f"    {p}")
+        print("  Checking for chatterbox package...")
+        
+        # Try to find chatterbox package in filesystem
+        for root, dirs, files in os.walk('.'):
+            if 'chatterbox' in dirs or '__init__.py' in files:
+                chatterbox_path = os.path.join(root, 'chatterbox' if 'chatterbox' in dirs else '')
+                if os.path.exists(os.path.join(chatterbox_path, '__init__.py')):
+                    print(f"  Found potential chatterbox at: {chatterbox_path}")
+        
         print("❌ Critical dependency missing - cannot start server")
         sys.exit(1)
 
