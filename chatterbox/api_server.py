@@ -749,6 +749,68 @@ def admin_reload_config():
         logger.error(f"Config reload failed: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
+@app.route('/admin/test-s3', methods=['GET'])
+def admin_test_s3():
+    """Test S3 connection and configuration"""
+    try:
+        if not S3_ENABLED:
+            return jsonify({
+                "success": False, 
+                "error": "S3 is not enabled",
+                "s3_enabled": False,
+                "boto3_available": BOTO3_AVAILABLE,
+                "bucket": S3_BUCKET
+            })
+        
+        if not S3_CLIENT:
+            return jsonify({
+                "success": False, 
+                "error": "S3 client not initialized",
+                "s3_enabled": S3_ENABLED,
+                "boto3_available": BOTO3_AVAILABLE,
+                "bucket": S3_BUCKET
+            })
+        
+        # Test bucket access by listing objects
+        response = S3_CLIENT.list_objects_v2(
+            Bucket=S3_BUCKET,
+            Prefix=S3_VOICES_PREFIX,
+            MaxKeys=1
+        )
+        
+        # Test credentials by uploading a small test file
+        test_key = f"{S3_VOICES_PREFIX}test_connection.txt"
+        S3_CLIENT.put_object(
+            Bucket=S3_BUCKET,
+            Key=test_key,
+            Body=b"S3 connection test",
+            ContentType="text/plain"
+        )
+        
+        # Clean up test file
+        S3_CLIENT.delete_object(Bucket=S3_BUCKET, Key=test_key)
+        
+        return jsonify({
+            "success": True,
+            "message": "S3 connection successful",
+            "s3_enabled": True,
+            "boto3_available": True,
+            "bucket": S3_BUCKET,
+            "region": S3_REGION,
+            "voices_prefix": S3_VOICES_PREFIX,
+            "audio_prefix": S3_AUDIO_PREFIX
+        })
+        
+    except Exception as e:
+        logger.error(f"S3 connection test failed: {e}")
+        return jsonify({
+            "success": False,
+            "error": f"S3 test failed: {str(e)}",
+            "s3_enabled": S3_ENABLED,
+            "boto3_available": BOTO3_AVAILABLE,
+            "bucket": S3_BUCKET
+        }), 500
+
 
 # ============ API Routes ============
 
@@ -1360,6 +1422,43 @@ ADMIN_HTML_TEMPLATE = """
             box-shadow: 0 8px 16px rgba(46, 204, 113, 0.3);
         }
         
+        .btn-secondary {
+            background: linear-gradient(135deg, #6c757d 0%, #5a6268 100%);
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(108, 117, 125, 0.3);
+        }
+        
+        .status-indicator {
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.9em;
+            font-weight: 600;
+            min-width: 80px;
+            text-align: center;
+        }
+        
+        .status-indicator.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status-indicator.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .status-indicator.loading {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        
         .alert {
             padding: 15px;
             border-radius: 8px;
@@ -1530,7 +1629,11 @@ ADMIN_HTML_TEMPLATE = """
             <div id="voices-tab" class="tab-pane active">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                     <h2>Voice Library</h2>
-                    <button class="btn btn-primary" onclick="loadVoices()">🔄 Refresh</button>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <button class="btn btn-secondary" onclick="testS3Connection()">🔗 Test S3</button>
+                        <button class="btn btn-primary" onclick="loadVoices()">🔄 Refresh</button>
+                        <span id="s3-status" class="status-indicator"></span>
+                    </div>
                 </div>
                 <div id="voices-container">
                     <div class="loading show">Loading voices...</div>
@@ -2074,6 +2177,34 @@ ADMIN_HTML_TEMPLATE = """
             }
         }
         
+        // Test S3 Connection
+        async function testS3Connection() {
+            const statusEl = document.getElementById('s3-status');
+            statusEl.textContent = 'Testing...';
+            statusEl.className = 'status-indicator loading';
+            
+            try {
+                const response = await fetch('/admin/test-s3');
+                const data = await response.json();
+                
+                if (data.success) {
+                    statusEl.textContent = '✅ S3 Connected';
+                    statusEl.className = 'status-indicator success';
+                    console.log('S3 Status:', data);
+                } else {
+                    statusEl.textContent = `❌ S3 Error`;
+                    statusEl.className = 'status-indicator error';
+                    console.error('S3 Error:', data);
+                    alert(`S3 Connection Failed: ${data.error}`);
+                }
+            } catch (error) {
+                statusEl.textContent = '❌ Network Error';
+                statusEl.className = 'status-indicator error';
+                console.error('S3 Test Error:', error);
+                alert(`S3 Test Failed: ${error.message}`);
+            }
+        }
+        
         // File upload drag & drop
         document.addEventListener('DOMContentLoaded', function() {
             const fileInput = document.querySelector('input[type="file"]');
@@ -2090,6 +2221,9 @@ ADMIN_HTML_TEMPLATE = """
             // Load initial data
             loadVoices();
             loadVoicesForSelect();
+            
+            // Test S3 connection on page load
+            setTimeout(testS3Connection, 1000);
         });
     </script>
 </body>
@@ -2140,6 +2274,7 @@ if __name__ == '__main__':
     logger.info("  POST /admin/upload-voice          - Upload new voice audio")
     logger.info("  POST /admin/create-character      - Create new character")
     logger.info("  POST /admin/test-voice/<id>       - Test voice generation")
+    logger.info("  GET  /admin/test-s3               - Test S3 connection")
     logger.info("  DELETE /admin/delete-voice/<id>   - Delete voice")
     logger.info("  DELETE /admin/delete-character/<id> - Delete character")
     logger.info("=" * 60)
