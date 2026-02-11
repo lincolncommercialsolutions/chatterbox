@@ -308,7 +308,7 @@ def cache_audio(text: str, character_id: str, audio_bytes: bytes, sample_rate: i
     logger.debug(f"Cached audio: {cache_key}")
 
 
-def generate_audio_bytes(text: str, character_id: str = "narrator", voice_id: Optional[str] = None, max_tokens: int = 400, use_cache: bool = True) -> Tuple[bytes, int, float]:
+def generate_audio_bytes(text: str, character_id: str = "andrew_tate", voice_id: Optional[str] = None, max_tokens: int = 400, use_cache: bool = True) -> Tuple[bytes, int, float]:
     """
     Generate audio from text using a character voice profile.
     
@@ -897,7 +897,7 @@ def generate_audio():
     Request JSON:
     {
         "text": "The AI character's response text",
-        "character": "narrator",          // optional, defaults to "narrator"
+        "character": "andrew_tate",      // optional, defaults to "andrew_tate"
         "voice_id": "friendly",           // optional, override character's default voice
         "language": "en",                 // optional, uses character's language if not specified
         "max_tokens": 400,               // optional, defaults to 400
@@ -945,7 +945,7 @@ def generate_audio():
             }), 400
         
         # Get character
-        character_id = data.get("character", "narrator")
+        character_id = data.get("character", "andrew_tate")
         if character_id not in CHARACTER_VOICES:
             return jsonify({
                 "success": False,
@@ -1161,7 +1161,7 @@ def generate_tts():
     Request JSON:
     {
         "text": "Hello world",
-        "character_id": "narrator",  // optional, defaults to "narrator"
+        "character_id": "andrew_tate",  // optional, defaults to "andrew_tate"
         "language": "en",  // optional, defaults to character's language
         "max_tokens": 400  // optional, defaults to 400
     }
@@ -1181,7 +1181,7 @@ def generate_tts():
         if len(text) > 500:
             return jsonify({"error": "Text too long (max 500 characters)"}), 400
         
-        character_id = data.get("character_id", "narrator")
+        character_id = data.get("character_id", "andrew_tate")
         max_tokens = int(data.get("max_tokens", 400))
         max_tokens = max(100, min(max_tokens, 1000))  # Clamp to 100-1000
         
@@ -1246,7 +1246,7 @@ def generate_tts_json():
                 "error": "Text cannot be empty"
             }), 400
         
-        character_id = data.get("character_id", "narrator")
+        character_id = data.get("character_id", "andrew_tate")
         max_tokens = int(data.get("max_tokens", 400))
         max_tokens = max(100, min(max_tokens, 1000))
         
