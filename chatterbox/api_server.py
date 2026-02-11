@@ -181,54 +181,6 @@ if DEVICE == "cuda":
 # Voice Library - Define all available voices
 # Each voice is an audio sample that defines the speaking style
 VOICE_LIBRARY = {
-    "narrator": {
-        "name": "Professional Narrator",
-        "language": "en",
-        "audio_url": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/en_f1.flac",
-        "description": "Clear, professional voice for narration",
-        "quality": "high",
-        "tags": ["professional", "formal", "narrative"]
-    },
-    "friendly": {
-        "name": "Friendly Voice",
-        "language": "en",
-        "audio_url": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/en_f1.flac",
-        "description": "Warm and approachable voice",
-        "quality": "high",
-        "tags": ["friendly", "warm", "casual"]
-    },
-    "expert": {
-        "name": "Expert Voice",
-        "language": "en",
-        "audio_url": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/en_f1.flac",
-        "description": "Authoritative voice for knowledge sharing",
-        "quality": "high",
-        "tags": ["expert", "authoritative", "formal"]
-    },
-    "child": {
-        "name": "Child Voice",
-        "language": "en",
-        "audio_url": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/en_f1.flac",
-        "description": "Youthful, energetic voice",
-        "quality": "high",
-        "tags": ["child", "energetic", "playful"]
-    },
-    "mysterious": {
-        "name": "Mysterious Voice",
-        "language": "en",
-        "audio_url": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/en_f1.flac",
-        "description": "Enigmatic and intriguing voice",
-        "quality": "high",
-        "tags": ["mysterious", "dramatic", "theatrical"]
-    },
-    "calm": {
-        "name": "Calm Voice",
-        "language": "en",
-        "audio_url": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/en_f1.flac",
-        "description": "Soothing and meditative voice",
-        "quality": "high",
-        "tags": ["calm", "soothing", "meditative"]
-    },
     "andrew_tate": {
         "name": "Andrew Tate Voice",
         "language": "en",
@@ -266,60 +218,6 @@ VOICE_LIBRARY = {
 # Character Configurations - Map characters to voices and generation parameters
 # This defines AI characters and which voice they use
 CHARACTER_VOICES = {
-    "narrator": {
-        "name": "Narrator",
-        "voice_id": "narrator",  # Reference to VOICE_LIBRARY
-        "language": "en",
-        "exaggeration": 0.5,
-        "temperature": 0.7,
-        "cfg_weight": 0.6,
-        "description": "Professional narrator voice"
-    },
-    "assistant": {
-        "name": "AI Assistant",
-        "voice_id": "friendly",
-        "language": "en",
-        "exaggeration": 0.6,
-        "temperature": 0.8,
-        "cfg_weight": 0.5,
-        "description": "Friendly AI assistant"
-    },
-    "expert": {
-        "name": "Expert",
-        "voice_id": "expert",
-        "language": "en",
-        "exaggeration": 0.4,
-        "temperature": 0.6,
-        "cfg_weight": 0.7,
-        "description": "Knowledgeable expert"
-    },
-    "luna": {
-        "name": "Luna",
-        "voice_id": "mysterious",
-        "language": "en",
-        "exaggeration": 0.5,
-        "temperature": 0.8,
-        "cfg_weight": 0.6,
-        "description": "Mysterious character voice"
-    },
-    "sage": {
-        "name": "Sage",
-        "voice_id": "calm",
-        "language": "en",
-        "exaggeration": 0.3,
-        "temperature": 0.6,
-        "cfg_weight": 0.8,
-        "description": "Wise and calm character"
-    },
-    "elara": {
-        "name": "Elara",
-        "voice_id": "friendly",
-        "language": "en",
-        "exaggeration": 0.7,
-        "temperature": 0.9,
-        "cfg_weight": 0.5,
-        "description": "Cheerful and warm character"
-    },
     "andrew_tate": {
         "name": "Andrew Tate",
         "voice_id": "andrew_tate",
