@@ -182,14 +182,11 @@ class TTSModelPool:
         Raises:
             RuntimeError: If queue depth limit is exceeded or timeout waiting for model
         """
-        # Check queue depth before entering queue
+        # Check waiting queue depth (not counting models currently in use)
         with self.waiting_lock:
-            busy_count = self.model_count - self.available_count()
-            total_waiting = busy_count + self.waiting_count
-            
-            if total_waiting >= (self.model_count + self.max_queue_depth):
-                logger.warning(f"Queue depth limit exceeded: {total_waiting} total requests (limit: {self.model_count + self.max_queue_depth})")
-                raise RuntimeError(f"Server overloaded: {total_waiting} requests in progress/queued (max: {self.model_count + self.max_queue_depth})")
+            if self.waiting_count >= self.max_queue_depth:
+                logger.warning(f"Queue depth limit exceeded: {self.waiting_count} waiting (limit: {self.max_queue_depth})")
+                raise RuntimeError(f"Server overloaded: {self.waiting_count} requests queued (max: {self.max_queue_depth})")
             
             self.waiting_count += 1
             logger.debug(f"Entering queue (waiting: {self.waiting_count}, available: {self.available_count()}/{self.model_count})")
