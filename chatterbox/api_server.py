@@ -1125,6 +1125,7 @@ def list_characters():
         characters.append({
             "id": char_id,
             "name": config["name"],
+            "voice_id": config.get("voice_id"),
             "language": config["language"],
             "description": config["description"]
         })
