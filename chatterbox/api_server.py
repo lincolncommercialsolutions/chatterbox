@@ -47,6 +47,7 @@ import traceback
 from functools import lru_cache
 import tempfile
 import shutil
+import threading
 
 from flask import Flask, request, jsonify, send_file, render_template_string
 from flask_cors import CORS
@@ -137,11 +138,12 @@ CORS(app, resources={
 
 # Global model instance
 MODEL = None
+MODEL_LOCK = threading.Lock()  # Prevent concurrent model access
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Configuration from environment
 API_PORT = int(os.getenv('API_PORT', 5000))
-MAX_TEXT_LENGTH = int(os.getenv('MAX_TEXT_LENGTH', 500))
+MAX_TEXT_LENGTH = int(os.getenv('MAX_TEXT_LENGTH', 2000))
 DEFAULT_MAX_TOKENS = int(os.getenv('DEFAULT_MAX_TOKENS', 400))
 CACHE_ENABLED = os.getenv('CACHE_ENABLED', 'true').lower() == 'true'
 BATCH_SIZE = int(os.getenv('BATCH_SIZE', 1))
@@ -448,16 +450,18 @@ def generate_audio_bytes(text: str, character_id: str = "narrator", voice_id: Op
         
         logger.info(f"Generating audio for character '{character_id}' with voice '{actual_voice_id}': {text[:100]}...")
         
-        # Generate speech with GPU acceleration
-        wav = model.generate(
-            text=text[:300],
-            language_id=language,
-            audio_prompt_path=voice["audio_url"],
-            exaggeration=character["exaggeration"],
-            temperature=character["temperature"],
-            cfg_weight=character["cfg_weight"],
-            max_new_tokens=max_tokens,
-        )
+        # Use lock to prevent concurrent model access (model not thread-safe)
+        with MODEL_LOCK:
+            # Generate speech with GPU acceleration
+            wav = model.generate(
+                text=text[:MAX_TEXT_LENGTH],
+                language_id=language,
+                audio_prompt_path=voice["audio_url"],
+                exaggeration=character["exaggeration"],
+                temperature=character["temperature"],
+                cfg_weight=character["cfg_weight"],
+                max_new_tokens=max_tokens,
+            )
         
         # Ensure numpy array
         if isinstance(wav, np.ndarray):
@@ -838,7 +842,7 @@ def admin_delete_character(character_id):
 def admin_test_voice(voice_id):
     """Test a voice by generating sample audio"""
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         test_text = data.get('text', "Hello, this is a test of the voice.")
         
         if voice_id not in VOICE_LIBRARY:
@@ -2217,7 +2221,7 @@ ADMIN_HTML_TEMPLATE = """
         
         async function testVoice(voiceId) {
             const testContainer = document.getElementById(`test-${voiceId}`);
-            testContainer.innerHTML = '<div class="loading show">Generating test audio...</div>';
+            testContainer.innerHTML = '<div class="loading show">Generating test audio... (this may take 20-40 seconds)</div>';
             
             try {
                 const response = await fetch(`/admin/test-voice/${voiceId}`, {
@@ -2231,13 +2235,22 @@ ADMIN_HTML_TEMPLATE = """
                 const data = await response.json();
                 
                 if (data.success) {
-                    const audioUrl = `data:audio/wav;base64,${data.audio}`;
+                    // Convert base64 to blob for better browser compatibility
+                    const byteCharacters = atob(data.audio);
+                    const byteNumbers = new Array(byteCharacters.length);
+                    for (let i = 0; i < byteCharacters.length; i++) {
+                        byteNumbers[i] = byteCharacters.charCodeAt(i);
+                    }
+                    const byteArray = new Uint8Array(byteNumbers);
+                    const blob = new Blob([byteArray], { type: 'audio/wav' });
+                    const audioUrl = URL.createObjectURL(blob);
+                    
                     testContainer.innerHTML = `
-                        <audio controls>
+                        <audio controls autoplay style="width: 100%;">
                             <source src="${audioUrl}" type="audio/wav">
                             Your browser does not support audio playback.
                         </audio>
-                        <p><small>Duration: ${data.duration.toFixed(1)}s</small></p>
+                        <p><small>Duration: ${data.duration.toFixed(1)}s | <a href="${audioUrl}" download="${voiceId}_test.wav">Download</a></small></p>
                     `;
                 } else {
                     testContainer.innerHTML = `<div class="alert alert-error">Test failed: ${data.error}</div>`;
@@ -2266,13 +2279,24 @@ ADMIN_HTML_TEMPLATE = """
                 const data = await response.json();
                 
                 if (data.success) {
-                    const audioUrl = data.audio_url || `data:audio/wav;base64,${data.audio}`;
+                    let audioUrl = data.audio_url;
+                    if (!audioUrl && data.audio) {
+                        // Convert base64 to blob for better browser compatibility
+                        const byteCharacters = atob(data.audio);
+                        const byteNumbers = new Array(byteCharacters.length);
+                        for (let i = 0; i < byteCharacters.length; i++) {
+                            byteNumbers[i] = byteCharacters.charCodeAt(i);
+                        }
+                        const byteArray = new Uint8Array(byteNumbers);
+                        const blob = new Blob([byteArray], { type: 'audio/wav' });
+                        audioUrl = URL.createObjectURL(blob);
+                    }
                     testContainer.innerHTML = `
-                        <audio controls>
+                        <audio controls autoplay style="width: 100%;">
                             <source src="${audioUrl}" type="audio/wav">
                             Your browser does not support audio playback.
                         </audio>
-                        <p><small>Duration: ${data.duration.toFixed(1)}s</small></p>
+                        <p><small>Duration: ${data.duration.toFixed(1)}s | <a href="${audioUrl}" download="${characterId}_test.wav">Download</a></small></p>
                     `;
                 } else {
                     testContainer.innerHTML = `<div class="alert alert-error">Test failed: ${data.error}</div>`;
