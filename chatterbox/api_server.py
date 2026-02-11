@@ -136,8 +136,9 @@ CORS(app, resources={
     }
 })
 
-# Global model instance
+# Global model instance and thread safety
 MODEL = None
+MODEL_LOCK = threading.Lock()  # Model isn't thread-safe - serialize access
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Configuration from environment
@@ -345,18 +346,19 @@ def generate_audio_bytes(text: str, character_id: str = "andrew_tate", voice_id:
         voice = VOICE_LIBRARY[actual_voice_id]
         language = character["language"]
         
-        logger.info(f"Generating audio for character '{character_id}' with voice '{actual_voice_id}': {text[:100]}...")
-        
-        # Generate speech (concurrent requests supported on c6i.4xlarge)
-        wav = model.generate(
-            text=text[:MAX_TEXT_LENGTH],
-            language_id=language,
-            audio_prompt_path=voice["audio_url"],
-            exaggeration=character["exaggeration"],
-            temperature=character["temperature"],
-            cfg_weight=character["cfg_weight"],
-            max_new_tokens=max_tokens,
-        )
+        logger.info(f"Generating audio for character '{character_id}' with voice '{actual_voice_id}': {text[:100]}...
+")        
+        # Use lock - model not thread-safe (tested: concurrent calls cause errors)
+        with MODEL_LOCK:
+            wav = model.generate(
+                text=text[:MAX_TEXT_LENGTH],
+                language_id=language,
+                audio_prompt_path=voice["audio_url"],
+                exaggeration=character["exaggeration"],
+                temperature=character["temperature"],
+                cfg_weight=character["cfg_weight"],
+                max_new_tokens=max_tokens,
+            )
         
         # Ensure numpy array
         if isinstance(wav, np.ndarray):
