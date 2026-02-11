@@ -48,6 +48,7 @@ from functools import lru_cache
 import tempfile
 import shutil
 import threading
+from queue import Queue
 
 from flask import Flask, request, jsonify, send_file, render_template_string
 from flask_cors import CORS
@@ -136,10 +137,62 @@ CORS(app, resources={
     }
 })
 
-# Global model instance and thread safety
-MODEL = None
-MODEL_LOCK = threading.Lock()  # Model isn't thread-safe - serialize access
+# Global model pool for concurrent processing
+MODEL_POOL = None
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+MODEL_POOL_SIZE = int(os.getenv('MODEL_POOL_SIZE', 3))  # 3 concurrent requests
+
+
+class TTSModelPool:
+    """Thread-safe pool of TTS model instances for concurrent processing.
+    
+    Each model instance can only handle one request at a time (not thread-safe),
+    but multiple instances allow concurrent processing up to pool_size.
+    """
+    
+    def __init__(self, model_count=3):
+        self.models = Queue(maxsize=model_count)
+        self.model_count = model_count
+        self.device = DEVICE
+        logger.info(f"Initializing TTS model pool with {model_count} instances...")
+        
+        # Load multiple model instances
+        for i in range(model_count):
+            try:
+                logger.info(f"Loading model instance {i+1}/{model_count} on {self.device}...")
+                model = ChatterboxMultilingualTTS.from_pretrained(self.device)
+                self.models.put(model)
+                logger.info(f"✅ Model instance {i+1} loaded successfully")
+            except Exception as e:
+                logger.error(f"❌ Failed to load model instance {i+1}: {e}")
+                traceback.print_exc()
+                raise
+        
+        logger.info(f"🎯 Model pool ready: {model_count} instances, {self.available_count()} available")
+    
+    def get_model(self, timeout=None):
+        """Get a model from the pool. Blocks if all models are busy."""
+        logger.debug(f"Requesting model (available: {self.available_count()}/{self.model_count})")
+        model = self.models.get(timeout=timeout)
+        logger.debug(f"Model acquired (available: {self.available_count()}/{self.model_count})")
+        return model
+    
+    def return_model(self, model):
+        """Return a model to the pool."""
+        self.models.put(model)
+        logger.debug(f"Model returned (available: {self.available_count()}/{self.model_count})")
+    
+    def available_count(self):
+        """Get number of available models."""
+        return self.models.qsize()
+    
+    def __del__(self):
+        """Cleanup models on pool destruction."""
+        try:
+            while not self.models.empty():
+                self.models.get_nowait()
+        except:
+            pass
 
 # Configuration from environment
 API_PORT = int(os.getenv('API_PORT', 5000))
@@ -257,20 +310,22 @@ CHARACTER_VOICES = {
 }
 
 
-def get_or_load_model():
-    """Load the Chatterbox model if not already loaded."""
-    global MODEL
-    if MODEL is None:
-        logger.info(f"Loading Chatterbox model on device: {DEVICE}")
+def get_or_load_model_pool():
+    """Initialize the model pool if not already loaded."""
+    global MODEL_POOL
+    if MODEL_POOL is None:
+        logger.info(f"Initializing TTS model pool (size={MODEL_POOL_SIZE}) on device: {DEVICE}")
         try:
-            MODEL = ChatterboxMultilingualTTS.from_pretrained(DEVICE)
-            logger.info(f"Model loaded successfully. Device: {MODEL.device}")
-            logger.info(f"Sample rate: {MODEL.sr}Hz")
+            MODEL_POOL = TTSModelPool(model_count=MODEL_POOL_SIZE)
+            # Get one model to check properties
+            sample_model = MODEL_POOL.get_model()
+            logger.info(f"Model pool ready. Device: {sample_model.device}, Sample rate: {sample_model.sr}Hz")
+            MODEL_POOL.return_model(sample_model)
         except Exception as e:
-            logger.error(f"Failed to load model: {e}")
+            logger.error(f"Failed to initialize model pool: {e}")
             traceback.print_exc()
             raise
-    return MODEL
+    return MODEL_POOL
 
 
 def get_cache_key(text: str, character_id: str) -> str:
@@ -329,7 +384,7 @@ def generate_audio_bytes(text: str, character_id: str = "andrew_tate", voice_id:
             if cached:
                 return cached
         
-        model = get_or_load_model()
+        model_pool = get_or_load_model_pool()
         
         # Get character profile
         if character_id not in CHARACTER_VOICES:
@@ -348,9 +403,10 @@ def generate_audio_bytes(text: str, character_id: str = "andrew_tate", voice_id:
         
         logger.info(f"Generating audio for character '{character_id}' with voice '{actual_voice_id}': {text[:100]}...")
         
-        # Use lock - model not thread-safe (tested: concurrent calls cause errors)
-        with MODEL_LOCK:
-            wav = model.generate(
+        # Get model from pool (blocks if all models busy)
+        acquired_model = model_pool.get_model(timeout=60)  # 60 second timeout
+        try:
+            wav = acquired_model.generate(
                 text=text[:MAX_TEXT_LENGTH],
                 language_id=language,
                 audio_prompt_path=voice["audio_url"],
@@ -359,6 +415,9 @@ def generate_audio_bytes(text: str, character_id: str = "andrew_tate", voice_id:
                 cfg_weight=character["cfg_weight"],
                 max_new_tokens=max_tokens,
             )
+        finally:
+            # Always return model to pool
+            model_pool.return_model(acquired_model)
         
         # Ensure numpy array
         if isinstance(wav, np.ndarray):
@@ -881,10 +940,32 @@ def health():
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
         "device": DEVICE,
-        "model_loaded": MODEL is not None,
+        "model_pool_loaded": MODEL_POOL is not None,
+        "pool_size": MODEL_POOL.model_count if MODEL_POOL else 0,
+        "available_models": MODEL_POOL.available_count() if MODEL_POOL else 0,
         "gpu": gpu_info,
         "cache_enabled": CACHE_ENABLED,
         "cache_size": len(AUDIO_CACHE) if AUDIO_CACHE else 0
+    })
+
+
+@app.route('/pool-status', methods=['GET'])
+def pool_status():
+    """Get current model pool status for load monitoring."""
+    if MODEL_POOL is None:
+        return jsonify({
+            "error": "Model pool not initialized",
+            "initialized": False
+        }), 503
+    
+    return jsonify({
+        "initialized": True,
+        "pool_size": MODEL_POOL.model_count,
+        "available": MODEL_POOL.available_count(),
+        "busy": MODEL_POOL.model_count - MODEL_POOL.available_count(),
+        "utilization_percent": round((MODEL_POOL.model_count - MODEL_POOL.available_count()) / MODEL_POOL.model_count * 100, 1),
+        "device": DEVICE,
+        "timestamp": datetime.utcnow().isoformat()
     })
 
 
@@ -2315,9 +2396,9 @@ if __name__ == '__main__':
     
     # Load model on startup
     try:
-        logger.info("Loading TTS model...")
-        get_or_load_model()
-        logger.info("✓ Model loaded successfully")
+        logger.info("Loading TTS model pool...")
+        get_or_load_model_pool()
+        logger.info("✓ Model pool loaded successfully")
     except Exception as e:
         logger.error(f"✗ Failed to load model on startup: {e}")
         logger.info("Server will attempt to load model on first request")
