@@ -48,7 +48,7 @@ from functools import lru_cache
 import tempfile
 import shutil
 import threading
-from queue import Queue
+from queue import Queue, Empty
 
 from flask import Flask, request, jsonify, send_file, render_template_string
 from flask_cors import CORS
@@ -180,7 +180,7 @@ class TTSModelPool:
         """Get a model from the pool. Blocks if all models are busy.
         
         Raises:
-            RuntimeError: If queue depth limit is exceeded
+            RuntimeError: If queue depth limit is exceeded or timeout waiting for model
         """
         # Check queue depth before entering queue
         with self.waiting_lock:
@@ -198,6 +198,10 @@ class TTSModelPool:
             model = self.models.get(timeout=timeout)
             logger.debug(f"Model acquired (available: {self.available_count()}/{self.model_count})")
             return model
+        except Empty:
+            # Timeout waiting for model - server is overloaded
+            logger.warning(f"Timeout waiting for model after {timeout}s - server overloaded")
+            raise RuntimeError(f"Server overloaded: Request timeout after {timeout}s waiting for available model")
         finally:
             with self.waiting_lock:
                 self.waiting_count -= 1
