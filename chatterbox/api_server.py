@@ -141,6 +141,8 @@ CORS(app, resources={
 MODEL_POOL = None
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 MODEL_POOL_SIZE = int(os.getenv('MODEL_POOL_SIZE', 3))  # 3 concurrent requests
+MAX_QUEUE_DEPTH = int(os.getenv('MAX_QUEUE_DEPTH', 6))  # Max waiting requests
+REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', 15))  # Timeout for model acquisition (seconds)
 
 
 class TTSModelPool:
@@ -148,13 +150,17 @@ class TTSModelPool:
     
     Each model instance can only handle one request at a time (not thread-safe),
     but multiple instances allow concurrent processing up to pool_size.
+    Implements queue depth limiting to prevent overload.
     """
     
-    def __init__(self, model_count=3):
+    def __init__(self, model_count=3, max_queue_depth=6):
         self.models = Queue(maxsize=model_count)
         self.model_count = model_count
         self.device = DEVICE
-        logger.info(f"Initializing TTS model pool with {model_count} instances...")
+        self.max_queue_depth = max_queue_depth
+        self.waiting_count = 0
+        self.waiting_lock = threading.Lock()
+        logger.info(f"Initializing TTS model pool with {model_count} instances (max queue: {max_queue_depth})...")
         
         # Load multiple model instances
         for i in range(model_count):
@@ -171,11 +177,30 @@ class TTSModelPool:
         logger.info(f"🎯 Model pool ready: {model_count} instances, {self.available_count()} available")
     
     def get_model(self, timeout=None):
-        """Get a model from the pool. Blocks if all models are busy."""
-        logger.debug(f"Requesting model (available: {self.available_count()}/{self.model_count})")
-        model = self.models.get(timeout=timeout)
-        logger.debug(f"Model acquired (available: {self.available_count()}/{self.model_count})")
-        return model
+        """Get a model from the pool. Blocks if all models are busy.
+        
+        Raises:
+            RuntimeError: If queue depth limit is exceeded
+        """
+        # Check queue depth before entering queue
+        with self.waiting_lock:
+            busy_count = self.model_count - self.available_count()
+            total_waiting = busy_count + self.waiting_count
+            
+            if total_waiting >= (self.model_count + self.max_queue_depth):
+                logger.warning(f"Queue depth limit exceeded: {total_waiting} total requests (limit: {self.model_count + self.max_queue_depth})")
+                raise RuntimeError(f"Server overloaded: {total_waiting} requests in progress/queued (max: {self.model_count + self.max_queue_depth})")
+            
+            self.waiting_count += 1
+            logger.debug(f"Entering queue (waiting: {self.waiting_count}, available: {self.available_count()}/{self.model_count})")
+        
+        try:
+            model = self.models.get(timeout=timeout)
+            logger.debug(f"Model acquired (available: {self.available_count()}/{self.model_count})")
+            return model
+        finally:
+            with self.waiting_lock:
+                self.waiting_count -= 1
     
     def return_model(self, model):
         """Return a model to the pool."""
@@ -185,6 +210,17 @@ class TTSModelPool:
     def available_count(self):
         """Get number of available models."""
         return self.models.qsize()
+    
+    def get_queue_stats(self):
+        """Get current queue statistics."""
+        with self.waiting_lock:
+            return {
+                "available": self.available_count(),
+                "busy": self.model_count - self.available_count(),
+                "waiting": self.waiting_count,
+                "pool_size": self.model_count,
+                "max_queue_depth": self.max_queue_depth
+            }
     
     def __del__(self):
         """Cleanup models on pool destruction."""
@@ -220,7 +256,8 @@ if S3_ENABLED and S3_BUCKET:
 
 # Audio cache for repeated requests (helps with OpenRouter retries)
 AUDIO_CACHE = {} if CACHE_ENABLED else None
-MAX_CACHE_SIZE = 100
+MAX_CACHE_SIZE = int(os.getenv('MAX_CACHE_SIZE', 200))  # Increased for longer TTL
+CACHE_TTL = int(os.getenv('CACHE_TTL', 7200))  # Cache time-to-live: 2 hours (7200 seconds)
 
 if DEVICE == "cuda":
     try:
@@ -314,9 +351,9 @@ def get_or_load_model_pool():
     """Initialize the model pool if not already loaded."""
     global MODEL_POOL
     if MODEL_POOL is None:
-        logger.info(f"Initializing TTS model pool (size={MODEL_POOL_SIZE}) on device: {DEVICE}")
+        logger.info(f"Initializing TTS model pool (size={MODEL_POOL_SIZE}, max_queue={MAX_QUEUE_DEPTH}) on device: {DEVICE}")
         try:
-            MODEL_POOL = TTSModelPool(model_count=MODEL_POOL_SIZE)
+            MODEL_POOL = TTSModelPool(model_count=MODEL_POOL_SIZE, max_queue_depth=MAX_QUEUE_DEPTH)
             # Get one model to check properties
             sample_model = MODEL_POOL.get_model()
             logger.info(f"Model pool ready. Device: {sample_model.device}, Sample rate: {sample_model.sr}Hz")
@@ -335,32 +372,63 @@ def get_cache_key(text: str, character_id: str) -> str:
 
 
 def get_cached_audio(text: str, character_id: str) -> Optional[Tuple[bytes, int, float]]:
-    """Retrieve cached audio if available."""
+    """Retrieve cached audio if available and not expired."""
     if AUDIO_CACHE is None:
         return None
     
     cache_key = get_cache_key(text, character_id)
     if cache_key in AUDIO_CACHE:
-        logger.info(f"Cache hit for text: {text[:50]}...")
-        return AUDIO_CACHE[cache_key]
+        cached_data = AUDIO_CACHE[cache_key]
+        # Check if cache entry has timestamp (new format)
+        if len(cached_data) == 4:  # (audio_bytes, sample_rate, duration, timestamp)
+            audio_bytes, sample_rate, duration, timestamp = cached_data
+            # Check if cache entry has expired
+            age = datetime.now().timestamp() - timestamp
+            if age > CACHE_TTL:
+                logger.debug(f"Cache expired for: {text[:50]}... (age: {age:.1f}s)")
+                del AUDIO_CACHE[cache_key]
+                return None
+            logger.info(f"Cache hit for text: {text[:50]}... (age: {age:.1f}s)")
+            return (audio_bytes, sample_rate, duration)
+        else:
+            # Old format without timestamp, treat as expired
+            logger.debug(f"Cache entry without timestamp, removing: {text[:50]}...")
+            del AUDIO_CACHE[cache_key]
+            return None
     
     return None
 
 
 def cache_audio(text: str, character_id: str, audio_bytes: bytes, sample_rate: int, duration: float):
-    """Cache generated audio."""
+    """Cache generated audio with timestamp for TTL expiration."""
     if AUDIO_CACHE is None:
         return
     
-    # Simple LRU: remove oldest if cache is full
+    # Remove expired entries first
+    current_time = datetime.now().timestamp()
+    expired_keys = []
+    for key, value in list(AUDIO_CACHE.items()):
+        if len(value) == 4:  # Has timestamp
+            _, _, _, timestamp = value
+            if current_time - timestamp > CACHE_TTL:
+                expired_keys.append(key)
+    
+    for key in expired_keys:
+        del AUDIO_CACHE[key]
+    
+    if expired_keys:
+        logger.debug(f"Removed {len(expired_keys)} expired cache entries")
+    
+    # LRU: remove oldest if cache is still full after expiration cleanup
     if len(AUDIO_CACHE) >= MAX_CACHE_SIZE:
         oldest_key = next(iter(AUDIO_CACHE))
         del AUDIO_CACHE[oldest_key]
-        logger.debug("Cache evicted oldest entry")
+        logger.debug("Cache evicted oldest entry (LRU)")
     
     cache_key = get_cache_key(text, character_id)
-    AUDIO_CACHE[cache_key] = (audio_bytes, sample_rate, duration)
-    logger.debug(f"Cached audio: {cache_key}")
+    # Store with timestamp for TTL tracking
+    AUDIO_CACHE[cache_key] = (audio_bytes, sample_rate, duration, current_time)
+    logger.debug(f"Cached audio: {cache_key} (TTL: {CACHE_TTL}s)")
 
 
 def generate_audio_bytes(text: str, character_id: str = "andrew_tate", voice_id: Optional[str] = None, max_tokens: int = 400, use_cache: bool = True) -> Tuple[bytes, int, float]:
@@ -404,7 +472,8 @@ def generate_audio_bytes(text: str, character_id: str = "andrew_tate", voice_id:
         logger.info(f"Generating audio for character '{character_id}' with voice '{actual_voice_id}': {text[:100]}...")
         
         # Get model from pool (blocks if all models busy)
-        acquired_model = model_pool.get_model(timeout=60)  # 60 second timeout
+        # Timeout ensures request doesn't hang indefinitely if pool is overloaded
+        acquired_model = model_pool.get_model(timeout=REQUEST_TIMEOUT)
         try:
             wav = acquired_model.generate(
                 text=text[:MAX_TEXT_LENGTH],
@@ -960,15 +1029,13 @@ def pool_status():
             "initialized": False
         }), 503
     
-    return jsonify({
-        "initialized": True,
-        "pool_size": MODEL_POOL.model_count,
-        "available": MODEL_POOL.available_count(),
-        "busy": MODEL_POOL.model_count - MODEL_POOL.available_count(),
-        "utilization_percent": round((MODEL_POOL.model_count - MODEL_POOL.available_count()) / MODEL_POOL.model_count * 100, 1),
-        "device": DEVICE,
-        "timestamp": datetime.utcnow().isoformat()
-    })
+    stats = MODEL_POOL.get_queue_stats()
+    stats["initialized"] = True
+    stats["utilization_percent"] = round(stats["busy"] / stats["pool_size"] * 100, 1) if stats["pool_size"] > 0 else 0
+    stats["device"] = DEVICE
+    stats["timestamp"] = datetime.utcnow().isoformat()
+    
+    return jsonify(stats)
 
 
 @app.route('/generate-audio', methods=['POST'])
@@ -1087,6 +1154,19 @@ def generate_audio():
         logger.info(f"OpenRouter: Audio ready in {generation_time_ms}ms, duration: {duration:.1f}s")
         
         return jsonify(response_data), 200
+        
+    except RuntimeError as e:
+        # Queue depth exceeded - return 429 Too Many Requests
+        if "overloaded" in str(e).lower() or "queue" in str(e).lower():
+            logger.warning(f"OpenRouter request rejected (overload): {e}")
+            return jsonify({
+                "success": False,
+                "error": "Server is currently overloaded. Please retry in a few seconds.",
+                "error_type": "rate_limit"
+            }), 429
+        # Other runtime errors
+        logger.error(f"OpenRouter runtime error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
         
     except Exception as e:
         logger.error(f"OpenRouter audio generation error: {e}")
@@ -1350,6 +1430,19 @@ def generate_tts_json():
             "character_id": character_id,
             "text_length": len(text)
         })
+        
+    except RuntimeError as e:
+        # Queue depth exceeded - return 429 Too Many Requests
+        if "overloaded" in str(e).lower() or "queue" in str(e).lower():
+            logger.warning(f"TTS request rejected (overload): {e}")
+            return jsonify({
+                "success": False,
+                "error": "Server is currently overloaded. Please retry in a few seconds.",
+                "error_type": "rate_limit"
+            }), 429
+        # Other runtime errors
+        logger.error(f"TTS runtime error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
         
     except Exception as e:
         logger.error(f"TTS JSON generation error: {e}")
