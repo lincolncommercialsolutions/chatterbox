@@ -141,7 +141,7 @@ CORS(app, resources={
 MODEL_POOL = None
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 MODEL_POOL_SIZE = int(os.getenv('MODEL_POOL_SIZE', 3))  # 3 concurrent requests
-MAX_QUEUE_DEPTH = int(os.getenv('MAX_QUEUE_DEPTH', 6))  # Max waiting requests
+MAX_QUEUE_DEPTH = int(os.getenv('MAX_QUEUE_DEPTH', 3))  # Max 3 waiting (can complete within 15s timeout)
 REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', 15))  # Timeout for model acquisition (seconds)
 
 
