@@ -415,6 +415,8 @@ def generate_audio_bytes(text: str, character_id: str = "andrew_tate", voice_id:
                 cfg_weight=character["cfg_weight"],
                 max_new_tokens=max_tokens,
             )
+            # Store sample rate before returning model
+            sample_rate = acquired_model.sr
         finally:
             # Always return model to pool
             model_pool.return_model(acquired_model)
@@ -438,11 +440,11 @@ def generate_audio_bytes(text: str, character_id: str = "andrew_tate", voice_id:
         
         # Encode to WAV bytes
         audio_buffer = io.BytesIO()
-        sf.write(audio_buffer, wav_np, model.sr, format='WAV')
+        sf.write(audio_buffer, wav_np, sample_rate, format='WAV')
         audio_buffer.seek(0)
         audio_bytes = audio_buffer.getvalue()
         
-        duration = len(wav_np) / model.sr
+        duration = len(wav_np) / sample_rate
         
         # Clear GPU cache to prevent memory buildup
         if DEVICE == "cuda":
@@ -452,9 +454,9 @@ def generate_audio_bytes(text: str, character_id: str = "andrew_tate", voice_id:
         
         # Cache the result
         if use_cache:
-            cache_audio(cache_key_override, "", audio_bytes, model.sr, duration)
+            cache_audio(cache_key_override, "", audio_bytes, sample_rate, duration)
         
-        return audio_bytes, model.sr, duration
+        return audio_bytes, sample_rate, duration
         
     except Exception as e:
         logger.error(f"Error generating audio: {e}")
