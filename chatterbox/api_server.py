@@ -346,8 +346,8 @@ def generate_audio_bytes(text: str, character_id: str = "andrew_tate", voice_id:
         voice = VOICE_LIBRARY[actual_voice_id]
         language = character["language"]
         
-        logger.info(f"Generating audio for character '{character_id}' with voice '{actual_voice_id}': {text[:100]}...
-")        
+        logger.info(f"Generating audio for character '{character_id}' with voice '{actual_voice_id}': {text[:100]}...")
+        
         # Use lock - model not thread-safe (tested: concurrent calls cause errors)
         with MODEL_LOCK:
             wav = model.generate(
