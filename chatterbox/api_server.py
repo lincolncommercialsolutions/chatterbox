@@ -50,12 +50,24 @@ import shutil
 import threading
 from queue import Queue, Empty
 
-from flask import Flask, request, jsonify, send_file, render_template_string
+from flask import Flask, request, jsonify, send_file, render_template_string, Response, stream_with_context
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 import io
 import soundfile as sf
+
+# Import streaming utilities
+try:
+    from .streaming_tts import split_text_into_chunks, generate_streaming_tts, create_chunk_metadata
+except ImportError:
+    # Fallback for different import structures
+    import sys
+    from pathlib import Path
+    streaming_path = Path(__file__).parent
+    if str(streaming_path) not in sys.path:
+        sys.path.insert(0, str(streaming_path))
+    from streaming_tts import split_text_into_chunks, generate_streaming_tts, create_chunk_metadata
 
 # Import chatterbox modules with fallback for different environments
 try:
@@ -1456,17 +1468,141 @@ def generate_tts_json():
 @app.route('/tts-stream', methods=['POST'])
 def stream_tts():
     """
-    Stream TTS generation (useful for OpenRouter integration).
-    Accepts streaming text input and returns audio.
+    Stream TTS generation with chunked audio delivery.
+    
+    Dramatically reduces perceived latency by:
+    1. Splitting text into sentence chunks
+    2. Generating each chunk independently
+    3. Streaming chunks as they're ready
+    4. Frontend plays first chunk while others generate
     
     Request JSON:
     {
-        "text": "Hello world",
-        "character_id": "narrator",
-        "max_tokens": 400
+        "text": "Long text with multiple sentences. Each sentence becomes a chunk. Frontend plays immediately.",
+        "character": "andrew_tate",
+        "language": "en",
+        "max_chunk_chars": 150  // optional
+    }
+    
+    Response: Server-Sent Events (SSE) stream
+    Each event contains:
+    {
+        "chunk_index": 0,
+        "total_chunks": 3,
+        "text": "First sentence.",
+        "audio": "base64_encoded_wav",
+        "sample_rate": 24000,
+        "duration": 1.5,
+        "is_final": false
     }
     """
-    return generate_tts()
+    try:
+        data = request.get_json()
+        
+        if not data or "text" not in data:
+            return jsonify({"success": False, "error": "Missing 'text' field"}), 400
+        
+        text = str(data["text"]).strip()
+        if not text:
+            return jsonify({"success": False, "error": "Text cannot be empty"}), 400
+        
+        character_id = data.get("character", data.get("character_id", "andrew_tate"))
+        max_chunk_chars = int(data.get("max_chunk_chars", 150))
+        
+        logger.info(f"Streaming TTS request: {len(text)} chars, character '{character_id}'")
+        
+        def generate():
+            """Generator function for SSE streaming."""
+            try:
+                # Generate chunks with streaming
+                for chunk_data in generate_streaming_tts(
+                    text=text,
+                    character_id=character_id,
+                    generate_audio_fn=generate_audio_bytes,
+                    max_chunk_chars=max_chunk_chars
+                ):
+                    # Send as SSE format
+                    yield f"data: {json.dumps(chunk_data)}\n\n"
+                
+                # Send completion event
+                yield f"data: {json.dumps({'event': 'complete'})}\n\n"
+                
+            except RuntimeError as e:
+                # Queue overload - send error event
+                if "overloaded" in str(e).lower() or "queue" in str(e).lower():
+                    error_data = {
+                        "event": "error",
+                        "error": "Server overloaded. Please retry in a few seconds.",
+                        "error_type": "rate_limit"
+                    }
+                    yield f"data: {json.dumps(error_data)}\n\n"
+                else:
+                    error_data = {"event": "error", "error": str(e)}
+                    yield f"data: {json.dumps(error_data)}\n\n"
+            
+            except Exception as e:
+                logger.error(f"Error in streaming generation: {e}")
+                error_data = {"event": "error", "error": "Internal server error"}
+                yield f"data: {json.dumps(error_data)}\n\n"
+        
+        # Return SSE response
+        return Response(
+            stream_with_context(generate()),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no',  # Disable nginx buffering
+                'Connection': 'keep-alive'
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Stream TTS error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/tts-stream-preview', methods=['POST'])
+def preview_stream_chunks():
+    """
+    Preview how text will be chunked for streaming without generating audio.
+    Useful for frontend to plan playback strategy.
+    
+    Request JSON:
+    {
+        "text": "Long text...",
+        "max_chunk_chars": 150
+    }
+    
+    Response JSON:
+    {
+        "total_chunks": 3,
+        "chunks": [
+            {"index": 0, "text_preview": "First...", "char_count": 120},
+            ...
+        ],
+        "estimated_total_time": 15.5
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or "text" not in data:
+            return jsonify({"error": "Missing 'text' field"}), 400
+        
+        text = str(data["text"]).strip()
+        max_chunk_chars = int(data.get("max_chunk_chars", 150))
+        
+        # Split into chunks
+        chunks = split_text_into_chunks(text, max_chars=max_chunk_chars)
+        
+        # Create metadata
+        metadata = create_chunk_metadata(chunks)
+        
+        return jsonify(metadata), 200
+        
+    except Exception as e:
+        logger.error(f"Preview error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 # Error handlers
